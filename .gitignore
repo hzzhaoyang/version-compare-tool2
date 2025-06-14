@@ -1,5 +1,5 @@
-# SpecStory explanation file
-.specstory/.what-is-this.md
+# SpecStory - 完全排除整个目录
+.specstory/
 
 # Environment variables
 .env
@@ -114,3 +114,5 @@ dmypy.json
 # OS
 .DS_Store
 Thumbs.db
+# SpecStory explanation file
+.specstory/.what-is-this.md
