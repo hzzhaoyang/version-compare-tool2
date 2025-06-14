@@ -1,0 +1,115 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Data Mind Python 编码规范
+
+## 命名规范
+
+- **文件名**：全小写，下划线分隔，如`gen_chart.py`、`user_memory.py`
+- **类名**：大驼峰命名，如`VizGenerator`、`ChatService`、`TokenMiddleware`
+- **函数名**：小写，下划线分隔，如`create_chart`、`select_metric_fields`
+- **私有方法**：下划线前缀，如`_build_context`、`_gen_viz`
+- **常量**：全大写，下划线分隔，如`FILTER_TYPE_MAP_FOR_MINING`、`HTTP_0_SUCCESS`
+
+## 代码质量规范
+
+### 类型提示
+- 所有函数参数和返回值必须使用类型提示
+- 使用Optional[Type]表示可能为None的值
+- 复杂结构使用 Pydantic V2 模型定义
+
+### Pydantic 模型规范
+- 使用 Pydantic V2 的最新特性和最佳实践
+- **模型验证器**：
+  * 使用 `@field_validator` 替代废弃的 `@validator`
+  * 使用 `@model_validator(mode='before')` 或 `@model_validator(mode='after')` 替代 `@root_validator`
+  * 字段验证器必须使用 `@classmethod` 装饰器
+- **字段定义**：
+  * 使用 `Field` 添加字段约束和文档
+  * 为每个字段提供清晰的描述
+  * 使用内置验证器（如 gt、ge、le 等）进行范围验证
+  * 示例：
+    ```python
+    external_context: Optional[str] = Field(default=None, max_length=1000)
+    session_name: Annotated[str, BeforeValidator(lambda v: check_length(v, 30))]
+    ```
+- **错误处理**：
+  * 在模型验证失败时提供清晰的错误信息
+  * 使用 try/except 捕获 ValidationError
+  * 记录详细的验证错误日志
+
+### 错误处理
+- 异常捕获需要明确指定异常类型，避免笼统的`try/except`
+- 关键处理逻辑中的错误需要记录日志
+- 对外部API调用结果进行适当的错误处理
+
+### 注释规范
+- 类需要有docstring说明其功能
+- 复杂函数需要有docstring说明其功能、参数和返回值
+- 复杂逻辑需要有行内注释解释原因
+- 如需插入模拟代码，需在注释中明确说明，并加 #TODO 标记
+- 自动生成代码如含有 TODO 注释被删除，需在对话中高亮提示
+
+### 日志规范
+- 使用`logger = logging.getLogger(__name__)`获取logger
+- 错误使用`logger.error`，警告使用`logger.warning`，信息使用`logger.info`
+- 日志信息需包含关键上下文，利于问题定位
+
+### 代码原则
+- 遵循 SOLID 设计原则
+- 避免代码重复（DRY 原则）
+- 保持代码简洁、清晰、易读
+- 考虑代码的可维护性和可扩展性
+- 遵循奥卡姆剃刀原则：如无必要，勿增实体
+- 异常捕获需明确指定异常类型，避免笼统 except
+- 注意代码的简洁性，单文件最好不要超过500行，单个方法最好不要超过50行
+
+### 自动代码检查
+- 对于自动生成的代码文件，需要运行 `make lint` 进行检查，如果发现任何问题需要修复
+- 对于自动生成的代码文件，需要运行 `make format` 进行格式优化
+- 使用 mypy 进行类型检查，black 进行代码格式化，ruff 进行代码质量检查
+
+### 类型定义一致性
+- 在调用外部方法或 API 时，需仔细核对参数类型和返回值类型，确保一致
+- 所有函数参数和返回值必须使用类型提示，尤其要注意 Optional 类型的使用
+
+## Data Mind 特定规范
+
+### LLM Agents 开发
+- 继承 `AgentWithMemory` 基类实现智能代理
+- 使用 `build_chat_model` 创建LLM模型实例
+- 异步方法使用 `async/await` 模式
+- 示例：
+  ```python
+  class VizGenerator(AgentWithMemory):
+      def __init__(self, workspace: str, theme_id: str) -> None:
+          llm = build_chat_model(ModelType.WEAK_CODING_MODEL, response_format="json_object")
+          self.theme_id = theme_id
+          retriever = get_retriever(workspace.lower(), self.theme_id)
+          super().__init__(llm, retriever)
+  ```
+
+### BI系统集成
+- 使用 `GalaxyClient` 与BI系统交互
+- 环境配置通过环境变量管理
+- 注意区分调试环境和生产环境的配置
+
+### 数据处理规范
+- 字段解析需要考虑数据缺失情况
+- JSON解析优先使用`.get(key, default)`防止KeyError
+- 使用 Pydantic 模型进行数据验证和转换
+
+### 知识库管理
+- 使用 `get_retriever` 获取知识检索器
+- 知识格式化使用 `KnowledgeFormatter`
+- 支持通用知识和业务知识的检索
+
+## 文档规范
+- 基于文档生成代码后，需检查并及时更新相关文档，结构不清晰时需加标题说明
+- 如发现 `.cursor/rules/context/` 下文档内容不准确或有歧义，需指出并提出更新建议
+
+## 团队协作与知识管理
+- 经验教训、重要修正、最佳实践需记录在 `.cursor/rules/logs/lesson_learned.mdc`
+- 任务规划、思考、进度追踪建议使用 `.cursor/rules/logs/scratchpad.mdc`，每次新任务前先梳理思路，任务完成后及时复盘
