@@ -1,8 +1,7 @@
 """
-核心Task丢失检测算法
-基于GitLab Compare API精确检测缺失的GALAXY tasks
+核心Task丢失检测算法 - 简化版
+基于GitLab Search API的精确检测，经过实际验证的可靠方案
 """
-import re
 import time
 from typing import Set, Dict, List, Any
 from ..gitlab.gitlab_manager import GitLabManager
@@ -10,17 +9,17 @@ from ..core.cache_manager import CacheKey
 
 
 class TaskLossDetector:
-    """Task丢失检测器 - 核心算法"""
+    """Task丢失检测器 - 简化版，专注于Search API核心功能"""
     
     def __init__(self, gitlab_manager: GitLabManager):
         self.gitlab_manager = gitlab_manager
-        # GALAXY-XXXXX格式的正则表达式
-        self.task_pattern = re.compile(r'GALAXY-(\d+)')
-        
-        print("TaskLossDetector 初始化完成")
+        print("TaskLossDetector 初始化完成 (Search API版)")
     
     def detect_missing_tasks(self, old_version: str, new_version: str) -> Dict[str, Any]:
-        """精确检测缺失的tasks - 核心算法"""
+        """
+        精确检测缺失的tasks - 基于GitLab Search API
+        这是经过验证的可靠方法
+        """
         print(f"🔍 开始检测版本差异: {old_version} -> {new_version}")
         start_time = time.time()
         
@@ -34,7 +33,8 @@ class TaskLossDetector:
                     'existing_tasks': [],
                     'total_diff_commits': 0,
                     'analysis': 'no_diff_commits',
-                    'processing_time': time.time() - start_time
+                    'processing_time': time.time() - start_time,
+                    'search_method': 'search_api'
                 }
             
             # 步骤2: 从差异commits提取涉及的task_id
@@ -47,12 +47,16 @@ class TaskLossDetector:
                     'existing_tasks': [],
                     'total_diff_commits': len(diff_commits),
                     'analysis': 'no_tasks_in_diff',
-                    'processing_time': time.time() - start_time
+                    'processing_time': time.time() - start_time,
+                    'search_method': 'search_api'
                 }
             
-            # 步骤3: 批量验证这些task在新版本中是否真的不存在
-            print("🔎 开始批量检查task存在性...")
-            existing_tasks_info = self._batch_check_tasks_existence(candidate_tasks, new_version)
+            # 步骤3: 使用Search API批量验证这些task在新版本中是否真的不存在
+            print("🔎 使用Search API检查task存在性...")
+            existing_tasks_info = self.gitlab_manager.search_specific_tasks(
+                list(candidate_tasks), 
+                new_version
+            )
             
             # 步骤4: 计算真正缺失的tasks
             existing_tasks = set(existing_tasks_info.keys())
@@ -68,7 +72,8 @@ class TaskLossDetector:
                 'total_diff_commits': len(diff_commits),
                 'potentially_missing_count': len(candidate_tasks),
                 'analysis': 'success',
-                'processing_time': processing_time
+                'processing_time': processing_time,
+                'search_method': 'search_api'
             }
             
         except Exception as e:
@@ -78,83 +83,37 @@ class TaskLossDetector:
                 'existing_tasks': [],
                 'error': str(e),
                 'analysis': 'error',
-                'processing_time': time.time() - start_time
+                'processing_time': time.time() - start_time,
+                'search_method': 'search_api'
             }
     
     def _extract_tasks_from_commits(self, commits: List[Dict[str, Any]]) -> Set[str]:
         """从commits中提取task IDs"""
-        tasks = set()
-        
-        for commit in commits:
-            commit_message = commit.get('message', '')
-            matches = self.task_pattern.findall(commit_message)
-            tasks.update(f"GALAXY-{match}" for match in matches)
-        
-        return tasks
+        return set(self.gitlab_manager.extract_tasks_from_commits(commits))
     
-    def _batch_check_tasks_existence(self, task_ids: Set[str], target_branch: str) -> Dict[str, Dict[str, Any]]:
-        """批量检查tasks在目标分支的存在性（关键优化）"""
+    def search_specific_tasks_in_branch(self, task_ids: List[str], branch_name: str) -> Dict[str, Dict[str, Any]]:
+        """
+        精确搜索特定tasks在分支中的存在情况
+        直接调用GitLab Manager的搜索功能
+        """
         if not task_ids:
             return {}
         
-        # 使用缓存避免重复查询同一分支
-        cache_key = CacheKey.branch_tasks(target_branch)
-        
-        if self.gitlab_manager.cache.has(cache_key):
-            all_branch_tasks = self.gitlab_manager.cache.get(cache_key)
-            print(f"📦 使用缓存的分支tasks数据")
-        else:
-            # 一次性获取分支所有tasks，避免重复API调用
-            all_branch_tasks = self._get_all_branch_tasks(target_branch)
-            self.gitlab_manager.cache.set(cache_key, all_branch_tasks)
-        
-        # 检查哪些task存在
-        existing_tasks = {}
-        for task_id in task_ids:
-            if task_id in all_branch_tasks:
-                existing_tasks[task_id] = all_branch_tasks[task_id]
-        
-        return existing_tasks
-    
-    def _get_all_branch_tasks(self, branch_name: str) -> Dict[str, Dict[str, Any]]:
-        """一次性获取分支所有tasks"""
-        print(f"🔄 正在获取分支 {branch_name} 的所有tasks...")
-        
-        # 获取分支的所有commits
-        all_commits = self.gitlab_manager.get_all_commits_for_branch(branch_name, max_pages=50)
-        
-        # 提取所有唯一的tasks
-        all_tasks = {}
-        
-        for commit in all_commits:
-            commit_message = commit.get('message', '')
-            found_tasks = self.task_pattern.findall(commit_message)
-            
-            for task_num in found_tasks:
-                task_id = f"GALAXY-{task_num}"
-                if task_id not in all_tasks:  # 避免重复记录，保留第一次出现
-                    all_tasks[task_id] = {
-                        'commit_id': commit.get('id'),
-                        'commit_date': commit.get('committed_date'),
-                        'first_occurrence': commit_message[:100] + '...' if len(commit_message) > 100 else commit_message,
-                        'author': commit.get('author_name', 'Unknown')
-                    }
-        
-        print(f"📊 分支 {branch_name} 共找到 {len(all_tasks)} 个唯一tasks")
-        return all_tasks
+        print(f"🎯 精确搜索模式：在分支 {branch_name} 中查找 {len(task_ids)} 个特定tasks")
+        return self.gitlab_manager.search_specific_tasks(task_ids, branch_name)
     
     def analyze_task_details(self, task_ids: List[str], branch_name: str) -> Dict[str, Any]:
         """分析特定tasks的详细信息"""
         if not task_ids:
             return {}
         
-        # 获取分支tasks
-        all_branch_tasks = self._get_all_branch_tasks(branch_name)
+        # 使用Search API获取task详情
+        found_tasks = self.gitlab_manager.search_specific_tasks(task_ids, branch_name)
         
         task_details = {}
         for task_id in task_ids:
-            if task_id in all_branch_tasks:
-                task_details[task_id] = all_branch_tasks[task_id]
+            if task_id in found_tasks:
+                task_details[task_id] = found_tasks[task_id]
             else:
                 task_details[task_id] = {
                     'status': 'not_found',
@@ -177,7 +136,7 @@ class TaskLossDetector:
         
         for commit in commits:
             commit_message = commit.get('message', '')
-            if self.task_pattern.search(commit_message):
+            if self.gitlab_manager.task_pattern.search(commit_message):
                 task_stats['commits_with_tasks'] += 1
             else:
                 task_stats['commits_without_tasks'] += 1
@@ -186,12 +145,11 @@ class TaskLossDetector:
     
     def clear_cache(self) -> None:
         """清理检测器相关的缓存"""
-        # 这里可以添加特定的缓存清理逻辑
         print("🧹 TaskLossDetector 缓存已清理")
 
 
 class TaskAnalyzer:
-    """Task分析器 - 提供额外的分析功能"""
+    """Task分析器 - 简化版，提供基础分析功能"""
     
     def __init__(self, task_detector: TaskLossDetector):
         self.task_detector = task_detector
@@ -220,21 +178,16 @@ class TaskAnalyzer:
     
     def analyze_task_patterns(self, commits: List[Dict[str, Any]]) -> Dict[str, Any]:
         """分析task模式"""
-        task_pattern = re.compile(r'GALAXY-(\d+)')
-        
-        patterns = {
-            'task_numbers': [],
-            'commit_types': {},
-            'authors': {},
-            'date_distribution': {}
-        }
+        task_numbers = []
+        commit_types = {}
+        authors = {}
         
         for commit in commits:
             message = commit.get('message', '')
-            matches = task_pattern.findall(message)
+            matches = self.task_detector.gitlab_manager.task_pattern.findall(message)
             
             if matches:
-                patterns['task_numbers'].extend([int(num) for num in matches])
+                task_numbers.extend([int(num) for num in matches])
                 
                 # 分析commit类型（基于message前缀）
                 commit_type = 'other'
@@ -245,18 +198,18 @@ class TaskAnalyzer:
                 elif message.startswith('docs'):
                     commit_type = 'documentation'
                 
-                patterns['commit_types'][commit_type] = patterns['commit_types'].get(commit_type, 0) + 1
+                commit_types[commit_type] = commit_types.get(commit_type, 0) + 1
                 
                 # 分析作者
                 author = commit.get('author_name', 'Unknown')
-                patterns['authors'][author] = patterns['authors'].get(author, 0) + 1
+                authors[author] = authors.get(author, 0) + 1
         
         return {
             'task_number_range': {
-                'min': min(patterns['task_numbers']) if patterns['task_numbers'] else 0,
-                'max': max(patterns['task_numbers']) if patterns['task_numbers'] else 0,
-                'count': len(patterns['task_numbers'])
+                'min': min(task_numbers) if task_numbers else 0,
+                'max': max(task_numbers) if task_numbers else 0,
+                'count': len(task_numbers)
             },
-            'commit_types': patterns['commit_types'],
-            'top_authors': dict(sorted(patterns['authors'].items(), key=lambda x: x[1], reverse=True)[:5])
+            'commit_types': commit_types,
+            'top_authors': dict(sorted(authors.items(), key=lambda x: x[1], reverse=True)[:5])
         } 
