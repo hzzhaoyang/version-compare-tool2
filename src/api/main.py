@@ -78,11 +78,8 @@ class MissingTasksDetailedAnalysis(BaseModel):
 
 class NewFeaturesDetailedAnalysis(BaseModel):
     """专门用于新增features分析的详细分析"""
-    completely_missing_tasks: List[str]
-    partially_missing_tasks: Dict[str, List[str]]
     completely_new_tasks: List[str]
     partially_new_tasks: Dict[str, List[str]]
-    missing_commit_count: int
     new_commit_count: int
 
 
@@ -204,11 +201,8 @@ async def analyze_new_features(request: VersionRequest):
         if 'detailed_analysis' in result:
             detail = result['detailed_analysis']
             detailed_analysis = NewFeaturesDetailedAnalysis(
-                completely_missing_tasks=sorted(list(detail.get('completely_missing_tasks', set()))),
-                partially_missing_tasks=detail.get('partially_missing_tasks', {}),
                 completely_new_tasks=sorted(list(detail.get('completely_new_tasks', set()))),
                 partially_new_tasks=detail.get('partially_new_tasks', {}),
-                missing_commit_count=len(detail.get('missing_commit_messages', set())),
                 new_commit_count=len(detail.get('new_commit_messages', set()))
             )
         

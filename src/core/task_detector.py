@@ -298,17 +298,23 @@ class TaskLossDetector:
         # 调用核心分析方法
         result = self._analyze_version_tasks(old_version, new_version)
         
-        # 返回新增features的结果，包含完整的分析数据
+        # 只返回新增features相关的结果
+        detailed_analysis = result.get('detailed_analysis', {})
+        filtered_detailed_analysis = {
+            'completely_new_tasks': detailed_analysis.get('completely_new_tasks', set()),
+            'partially_new_tasks': detailed_analysis.get('partially_new_tasks', {}),
+            'new_commit_messages': detailed_analysis.get('new_commit_messages', set())
+        }
+        
         return {
             'new_features': result['new_features'],
             'old_tasks': result['old_tasks'],
             'new_tasks': result['new_tasks'],
-            'missing_tasks': result['missing_tasks'],
             'common_tasks': result['common_tasks'],
             'analysis': result['analysis'],
             'total_time': result['total_time'],
             'error': result.get('error'),
             'old_commits_count': result.get('old_commits_count', 0),
             'new_commits_count': result.get('new_commits_count', 0),
-            'detailed_analysis': result.get('detailed_analysis')
+            'detailed_analysis': filtered_detailed_analysis
         } 
