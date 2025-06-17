@@ -262,13 +262,13 @@ class GitLabManager:
     def extract_commit_messages_with_tasks(self, commits: List[Dict[str, Any]]) -> Dict[str, str]:
         """
         从commits中提取包含task的commit message
-        基于完整commit message比对，而不是单纯的task ID
+        基于task ID和message第一行的组合来判断，忽略cherry-pick等差异
         
         Args:
             commits: commit列表
             
         Returns:
-            Dict[str, str]: {commit_message: primary_task_id} 映射
+            Dict[str, str]: {task_id_with_first_line: primary_task_id} 映射
         """
         start_time = time.time()
         logger.info(f"[{self._timestamp()}] 🧮 开始从 {len(commits)} 个commits中提取task相关的commit messages...")
@@ -280,9 +280,19 @@ class GitLabManager:
             # 查找包含task ID的commit message
             found_tasks = self.task_pattern.findall(message)
             if found_tasks:
-                # 一个commit message可能包含多个task，但我们以第一个为主
-                primary_task = found_tasks[0]
-                commit_task_map[message] = primary_task
+                # 提取message的第一行
+                first_line = message.split('\n')[0].strip()
+                
+                # 为每个找到的task ID都创建一个记录
+                # 这样可以处理一个commit包含多个task的情况
+                for task_id in found_tasks:
+                    # 使用task ID + 第一行作为唯一标识，这样可以：
+                    # 1. 避免cherry-pick信息的干扰
+                    # 2. 保留核心的功能描述信息
+                    # 3. 同一个task的不同commit仍然能被区分
+                    # 4. 一个commit包含多个task时，每个task都能被正确识别
+                    task_with_first_line = f"{task_id}||{first_line}"
+                    commit_task_map[task_with_first_line] = task_id
             
             if (i + 1) % 1000 == 0:  # 每1000个commits打印一次进度
                 logger.debug(f"[{self._timestamp()}] 📊 已处理 {i + 1}/{len(commits)} 个commits，当前找到 {len(commit_task_map)} 个task相关commits")
@@ -292,14 +302,16 @@ class GitLabManager:
         logger.info(f"    📊 处理commits: {len(commits)} 个")
         logger.info(f"    📊 包含task的commits: {len(commit_task_map)} 个")
         logger.info(f"    📊 耗时: {elapsed:.3f}s")
+        logger.info(f"    📊 使用task ID + 第一行组合 (忽略cherry-pick和其他差异)")
         
         if commit_task_map:
             # 显示前几个示例
             sample_items = list(commit_task_map.items())[:5]
             logger.info(f"    📊 前5个示例:")
-            for msg, task in sample_items:
-                # 截断过长的message
-                short_msg = msg[:50] + "..." if len(msg) > 50 else msg
+            for key, task in sample_items:
+                # 提取第一行用于显示
+                first_line = key.split('||')[1] if '||' in key else key
+                short_msg = first_line[:50] + "..." if len(first_line) > 50 else first_line
                 logger.info(f"        {task}: {short_msg}")
         
         return commit_task_map
@@ -317,4 +329,26 @@ class GitLabManager:
             'config': self.config,
             'gitlab_url': self.gitlab_url,
             'project_id': self.project_id
-        } 
+        }
+    
+    def _normalize_commit_message(self, message: str) -> str:
+        """
+        标准化commit message，移除cherry-pick等信息以便准确比较
+        
+        Args:
+            message: 原始commit message
+            
+        Returns:
+            标准化后的commit message
+        """
+        # 移除cherry-pick信息
+        # 格式: (cherry picked from commit xxx)
+        import re
+        
+        # 移除cherry-pick行及其前面的空行
+        normalized = re.sub(r'\n*\(cherry picked from commit [a-f0-9]+\)\s*$', '', message, flags=re.MULTILINE)
+        
+        # 移除末尾的多余空白字符
+        normalized = normalized.rstrip()
+        
+        return normalized 

@@ -50,27 +50,68 @@ app.add_middleware(
 version_service: Optional[VersionComparisonService] = None
 
 
-class VersionCompareRequest(BaseModel):
-    """版本比较请求模型"""
+class VersionRequest(BaseModel):
     old_version: str
     new_version: str
 
 
 class TaskAnalysisRequest(BaseModel):
-    """Task分析请求模型"""
     task_ids: List[str]
     version: str
 
 
 class TaskSearchRequest(BaseModel):
-    """Task搜索请求模型"""
     task_id: str
     version: Optional[str] = None
 
 
-class VersionValidateRequest(BaseModel):
-    """版本验证请求模型"""
+class VersionValidationRequest(BaseModel):
     versions: List[str]
+
+
+class MissingTasksDetailedAnalysis(BaseModel):
+    """专门用于缺失tasks检测的详细分析"""
+    completely_missing_tasks: List[str]
+    partially_missing_tasks: Dict[str, List[str]]
+    missing_commit_count: int
+
+
+class NewFeaturesDetailedAnalysis(BaseModel):
+    """专门用于新增features分析的详细分析"""
+    completely_missing_tasks: List[str]
+    partially_missing_tasks: Dict[str, List[str]]
+    completely_new_tasks: List[str]
+    partially_new_tasks: Dict[str, List[str]]
+    missing_commit_count: int
+    new_commit_count: int
+
+
+class MissingTasksResponse(BaseModel):
+    missing_tasks: List[str]
+    analysis: str
+    total_time: float
+    error: Optional[str]
+    old_commits_count: int
+    new_commits_count: int
+    old_tasks_count: int
+    new_tasks_count: int
+    detailed_analysis: Optional[MissingTasksDetailedAnalysis]
+    service_stats: Dict[str, Any]
+    api_stats: Dict[str, Any]
+
+
+class NewFeaturesResponse(BaseModel):
+    new_features: List[str]
+    analysis: str
+    total_time: float
+    error: Optional[str]
+    old_commits_count: int
+    new_commits_count: int
+    old_tasks_count: int
+    new_tasks_count: int
+    detailed_analysis: Optional[NewFeaturesDetailedAnalysis]
+    service_stats: Dict[str, Any]
+    api_stats: Dict[str, Any]
 
 
 @app.on_event("startup")
@@ -126,68 +167,175 @@ async def health_check():
     }
 
 
-@app.post("/analyze-new-features")
-async def analyze_new_features(request: VersionCompareRequest):
+@app.post("/analyze-new-features", response_model=NewFeaturesResponse)
+async def analyze_new_features(request: VersionRequest):
     """
     分析新增features
-    
-    分析新版本有但旧版本没有的tasks，用于了解新增功能
     """
-    if version_service is None:
-        raise HTTPException(status_code=503, detail="服务未初始化")
-    
+    api_start_time = time.time()
     logger.info(f"🆕 API请求: 分析新增features {request.old_version} -> {request.new_version}")
     
     try:
-        start_time = time.time()
         result = version_service.analyze_new_features(request.old_version, request.new_version)
-        api_elapsed = time.time() - start_time
+        api_time = time.time() - api_start_time
         
-        # 添加API层统计
-        result['api_stats'] = {
-            'api_version': '2.0.0',
-            'api_elapsed': api_elapsed,
-            'request_timestamp': start_time
-        }
+        # 检查是否有错误
+        if result.get('analysis') == 'error':
+            return NewFeaturesResponse(
+                new_features=[],
+                analysis="error",
+                total_time=result.get('total_time', 0),
+                error=result.get('error', 'Unknown error'),
+                old_commits_count=0,
+                new_commits_count=0,
+                old_tasks_count=0,
+                new_tasks_count=0,
+                detailed_analysis=None,
+                service_stats=result.get('service_stats', {}),
+                api_stats={
+                    'api_time': api_time,
+                    'endpoint': '/analyze-new-features',
+                    'error': result.get('error', 'Unknown error')
+                }
+            )
         
-        logger.info(f"✅ API响应: 新增features分析完成，API耗时: {api_elapsed:.2f}s")
-        return result
+        # 构建详细分析结果
+        detailed_analysis = None
+        if 'detailed_analysis' in result:
+            detail = result['detailed_analysis']
+            detailed_analysis = NewFeaturesDetailedAnalysis(
+                completely_missing_tasks=sorted(list(detail.get('completely_missing_tasks', set()))),
+                partially_missing_tasks=detail.get('partially_missing_tasks', {}),
+                completely_new_tasks=sorted(list(detail.get('completely_new_tasks', set()))),
+                partially_new_tasks=detail.get('partially_new_tasks', {}),
+                missing_commit_count=len(detail.get('missing_commit_messages', set())),
+                new_commit_count=len(detail.get('new_commit_messages', set()))
+            )
+        
+        response = NewFeaturesResponse(
+            new_features=sorted(list(result.get('new_features', set()))),
+            analysis=result.get('analysis', 'success'),
+            total_time=result.get('total_time', 0),
+            error=None,
+            old_commits_count=result.get('old_commits_count', 0),
+            new_commits_count=result.get('new_commits_count', 0),
+            old_tasks_count=len(result.get('old_tasks', set())),
+            new_tasks_count=len(result.get('new_tasks', set())),
+            detailed_analysis=detailed_analysis,
+            service_stats=version_service.get_performance_stats(),
+            api_stats={
+                'api_time': api_time,
+                'endpoint': '/analyze-new-features'
+            }
+        )
+        
+        logger.info(f"✅ API响应: 新增features分析完成，API耗时: {api_time:.2f}s")
+        return response
         
     except Exception as e:
-        logger.error(f"❌ API错误: 新增features分析失败: {e}")
-        raise HTTPException(status_code=500, detail=f"分析失败: {str(e)}")
+        api_time = time.time() - api_start_time
+        logger.error(f"❌ API错误: {str(e)}")
+        return NewFeaturesResponse(
+            new_features=[],
+            analysis="error",
+            total_time=0,
+            error=str(e),
+            old_commits_count=0,
+            new_commits_count=0,
+            old_tasks_count=0,
+            new_tasks_count=0,
+            detailed_analysis=None,
+            service_stats={},
+            api_stats={
+                'api_time': api_time,
+                'endpoint': '/analyze-new-features',
+                'error': str(e)
+            }
+        )
 
 
-@app.post("/detect-missing-tasks")
-async def detect_missing_tasks(request: VersionCompareRequest):
+@app.post("/detect-missing-tasks", response_model=MissingTasksResponse)
+async def detect_missing_tasks(request: VersionRequest):
     """
     检测缺失的tasks
-    
-    检测旧版本有但新版本没有的tasks，用于识别可能丢失的功能
     """
-    if version_service is None:
-        raise HTTPException(status_code=503, detail="服务未初始化")
-    
+    api_start_time = time.time()
     logger.info(f"🔍 API请求: 检测缺失tasks {request.old_version} -> {request.new_version}")
     
     try:
-        start_time = time.time()
         result = version_service.detect_missing_tasks(request.old_version, request.new_version)
-        api_elapsed = time.time() - start_time
+        api_time = time.time() - api_start_time
         
-        # 添加API层统计
-        result['api_stats'] = {
-            'api_version': '2.0.0',
-            'api_elapsed': api_elapsed,
-            'request_timestamp': start_time
-        }
+        # 检查是否有错误
+        if result.get('analysis') == 'error':
+            return MissingTasksResponse(
+                missing_tasks=[],
+                analysis="error",
+                total_time=result.get('total_time', 0),
+                error=result.get('error', 'Unknown error'),
+                old_commits_count=0,
+                new_commits_count=0,
+                old_tasks_count=0,
+                new_tasks_count=0,
+                detailed_analysis=None,
+                service_stats=result.get('service_stats', {}),
+                api_stats={
+                    'api_time': api_time,
+                    'endpoint': '/detect-missing-tasks',
+                    'error': result.get('error', 'Unknown error')
+                }
+            )
         
-        logger.info(f"✅ API响应: 缺失tasks检测完成，API耗时: {api_elapsed:.2f}s")
-        return result
+        # 构建详细分析结果
+        detailed_analysis = None
+        if 'detailed_analysis' in result:
+            detail = result['detailed_analysis']
+            detailed_analysis = MissingTasksDetailedAnalysis(
+                completely_missing_tasks=sorted(list(detail.get('completely_missing_tasks', set()))),
+                partially_missing_tasks=detail.get('partially_missing_tasks', {}),
+                missing_commit_count=len(detail.get('missing_commit_messages', set()))
+            )
+        
+        response = MissingTasksResponse(
+            missing_tasks=sorted(list(result.get('missing_tasks', set()))),
+            analysis=result.get('analysis', 'success'),
+            total_time=result.get('total_time', 0),
+            error=None,
+            old_commits_count=result.get('old_commits_count', 0),
+            new_commits_count=result.get('new_commits_count', 0),
+            old_tasks_count=len(result.get('old_tasks', set())),
+            new_tasks_count=len(result.get('new_tasks', set())),
+            detailed_analysis=detailed_analysis,
+            service_stats=version_service.get_performance_stats(),
+            api_stats={
+                'api_time': api_time,
+                'endpoint': '/detect-missing-tasks'
+            }
+        )
+        
+        logger.info(f"✅ API响应: 缺失tasks检测完成，API耗时: {api_time:.2f}s")
+        return response
         
     except Exception as e:
-        logger.error(f"❌ API错误: 缺失tasks检测失败: {e}")
-        raise HTTPException(status_code=500, detail=f"检测失败: {str(e)}")
+        api_time = time.time() - api_start_time
+        logger.error(f"❌ API错误: {str(e)}")
+        return MissingTasksResponse(
+            missing_tasks=[],
+            analysis="error",
+            total_time=0,
+            error=str(e),
+            old_commits_count=0,
+            new_commits_count=0,
+            old_tasks_count=0,
+            new_tasks_count=0,
+            detailed_analysis=None,
+            service_stats={},
+            api_stats={
+                'api_time': api_time,
+                'endpoint': '/detect-missing-tasks',
+                'error': str(e)
+            }
+        )
 
 
 @app.post("/analyze-tasks")
@@ -255,7 +403,7 @@ async def search_tasks(request: TaskSearchRequest):
 
 
 @app.post("/validate-versions")
-async def validate_versions(request: VersionValidateRequest):
+async def validate_versions(request: VersionValidationRequest):
     """
     验证版本
     

@@ -119,26 +119,66 @@ class TaskLossDetector:
             logger.info(f"[{self._timestamp()}] 🔍 解析新版本 {new_version} 的commit messages...")
             new_commit_task_map = self.gitlab_manager.extract_commit_messages_with_tasks(new_commits)
             
-            # 阶段3: 基于task ID比对计算差异（而不是commit message比对）
-            logger.info(f"[{self._timestamp()}] 🧮 阶段3: 基于task ID比对计算差异...")
+            # 阶段3: 基于commit message精确比对计算差异（可检测同一task的部分commits缺失）
+            logger.info(f"[{self._timestamp()}] 🧮 阶段3: 基于commit message精确比对计算差异...")
             
-            # 获取task ID集合
+            # 获取commit message集合和task ID集合
+            old_messages = set(old_commit_task_map.keys())
+            new_messages = set(new_commit_task_map.keys())
             old_tasks = set(old_commit_task_map.values())
             new_tasks = set(new_commit_task_map.values())
             
-            # 找出旧版本有但新版本没有的task IDs
-            missing_tasks = old_tasks - new_tasks
+            # 找出旧版本有但新版本没有的commit messages
+            missing_messages = old_messages - new_messages
             
-            # 找出新版本有但旧版本没有的task IDs
-            new_features = new_tasks - old_tasks
+            # 找出新版本有但旧版本没有的commit messages  
+            new_messages_only = new_messages - old_messages
+            
+            # 从缺失的commit messages中提取对应的task IDs
+            missing_commit_tasks = {}  # {task_id: [missing_commit_messages]}
+            for msg in missing_messages:
+                task_id = old_commit_task_map[msg]
+                if task_id not in missing_commit_tasks:
+                    missing_commit_tasks[task_id] = []
+                missing_commit_tasks[task_id].append(msg)
+            
+            # 从新增的commit messages中提取对应的task IDs
+            new_commit_tasks = {}  # {task_id: [new_commit_messages]}
+            for msg in new_messages_only:
+                task_id = new_commit_task_map[msg]
+                if task_id not in new_commit_tasks:
+                    new_commit_tasks[task_id] = []
+                new_commit_tasks[task_id].append(msg)
+            
+            # 分类分析缺失情况
+            completely_missing_tasks = set()  # 完全缺失的tasks（新版本完全没有）
+            partially_missing_tasks = {}     # 部分缺失的tasks（新版本有但缺少某些commits）
+            
+            for task_id, missing_commits in missing_commit_tasks.items():
+                if task_id not in new_tasks:
+                    # 新版本完全没有这个task
+                    completely_missing_tasks.add(task_id)
+                else:
+                    # 新版本有这个task，但缺少某些commits
+                    partially_missing_tasks[task_id] = missing_commits
+            
+            # 计算新增的tasks（完全新增的和部分新增的）
+            completely_new_tasks = new_tasks - old_tasks  # 完全新增的tasks
+            partially_new_tasks = {}  # 已存在但有新commits的tasks
+            
+            for task_id, new_commits in new_commit_tasks.items():
+                if task_id in old_tasks:
+                    # 旧版本也有这个task，但有新的commits
+                    partially_new_tasks[task_id] = new_commits
             
             # 计算共同的tasks
             common_tasks = old_tasks & new_tasks
             
-            # 为了调试，也计算commit message差异
-            old_messages = set(old_commit_task_map.keys())
-            new_messages = set(new_commit_task_map.keys())
-            missing_messages = old_messages - new_messages
+            # 合并所有缺失的tasks（完全缺失 + 部分缺失）
+            all_missing_tasks = completely_missing_tasks | set(partially_missing_tasks.keys())
+            
+            # 合并所有新增的tasks（完全新增 + 部分新增）
+            all_new_tasks = completely_new_tasks | set(partially_new_tasks.keys())
             
             analysis_time = time.time() - analysis_start
             total_time = time.time() - start_time
@@ -151,28 +191,45 @@ class TaskLossDetector:
             logger.info(f"    ⚡ 性能提升: {performance_improvement:.1f}x 倍速")
             logger.info(f"    📊 旧版本 {old_version}: {len(old_tasks)} 个tasks")
             logger.info(f"    📊 新版本 {new_version}: {len(new_tasks)} 个tasks")
-            logger.info(f"    🔍 缺失tasks: {len(missing_tasks)} 个")
-            logger.info(f"    🆕 新增features: {len(new_features)} 个")
+            logger.info(f"    🔍 缺失tasks: {len(all_missing_tasks)} 个")
+            logger.info(f"      - 完全缺失: {len(completely_missing_tasks)} 个")
+            logger.info(f"      - 部分缺失: {len(partially_missing_tasks)} 个")
+            logger.info(f"    🆕 新增tasks: {len(all_new_tasks)} 个")
+            logger.info(f"      - 完全新增: {len(completely_new_tasks)} 个")
+            logger.info(f"      - 部分新增: {len(partially_new_tasks)} 个")
             logger.info(f"    ✅ 共同tasks: {len(common_tasks)} 个")
-            logger.info(f"    📝 基于task ID比对 (修复后的逻辑)")
-            logger.info(f"    📝 commit message差异: {len(missing_messages)} 个 (仅供参考)")
+            logger.info(f"    📝 基于commit message精确比对 (优化后的逻辑)")
+            logger.info(f"    📝 缺失commit messages: {len(missing_messages)} 个")
+            logger.info(f"    📝 新增commit messages: {len(new_messages_only)} 个")
             
             # 打印详细的task信息
-            if missing_tasks:
-                missing_list = sorted(list(missing_tasks))
-                logger.info(f"    🔍 缺失tasks详情: {missing_list[:20]}{'...' if len(missing_list) > 20 else ''}")
+            if completely_missing_tasks:
+                missing_list = sorted(list(completely_missing_tasks))
+                logger.info(f"    🔍 完全缺失tasks: {missing_list[:10]}{'...' if len(missing_list) > 10 else ''}")
             
-            if new_features:
-                new_list = sorted(list(new_features))
-                logger.info(f"    🆕 新增features详情: {new_list[:20]}{'...' if len(new_list) > 20 else ''}")
+            if partially_missing_tasks:
+                partial_list = sorted(list(partially_missing_tasks.keys()))
+                logger.info(f"    🔍 部分缺失tasks: {partial_list[:10]}{'...' if len(partial_list) > 10 else ''}")
+                # 显示部分缺失的详细信息
+                for task_id in partial_list[:3]:  # 只显示前3个的详细信息
+                    missing_count = len(partially_missing_tasks[task_id])
+                    logger.info(f"      - {task_id}: 缺失 {missing_count} 个commits")
+            
+            if completely_new_tasks:
+                new_list = sorted(list(completely_new_tasks))
+                logger.info(f"    🆕 完全新增tasks: {new_list[:10]}{'...' if len(new_list) > 10 else ''}")
+            
+            if partially_new_tasks:
+                partial_new_list = sorted(list(partially_new_tasks.keys()))
+                logger.info(f"    🆕 部分新增tasks: {partial_new_list[:10]}{'...' if len(partial_new_list) > 10 else ''}")
             
             logger.info(f"[{self._timestamp()}] " + "="*80)
             
             return {
                 'old_tasks': old_tasks,
                 'new_tasks': new_tasks,
-                'missing_tasks': missing_tasks,
-                'new_features': new_features,
+                'missing_tasks': all_missing_tasks,
+                'new_features': all_new_tasks,
                 'common_tasks': common_tasks,
                 'analysis': 'success',
                 'total_time': total_time,
@@ -180,7 +237,16 @@ class TaskLossDetector:
                 'fetch_time': fetch_time,
                 'analysis_time': analysis_time,
                 'old_commits_count': len(old_commits),
-                'new_commits_count': len(new_commits)
+                'new_commits_count': len(new_commits),
+                # 新增详细分析结果
+                'detailed_analysis': {
+                    'completely_missing_tasks': completely_missing_tasks,
+                    'partially_missing_tasks': partially_missing_tasks,
+                    'completely_new_tasks': completely_new_tasks,
+                    'partially_new_tasks': partially_new_tasks,
+                    'missing_commit_messages': missing_messages,
+                    'new_commit_messages': new_messages_only
+                }
             }
             
         except Exception as e:
@@ -208,16 +274,19 @@ class TaskLossDetector:
         # 调用核心分析方法
         result = self._analyze_version_tasks(old_version, new_version)
         
-        # 返回缺失tasks的结果
+        # 返回缺失tasks的结果，包含完整的分析数据
         return {
-            'missing_tasks': sorted(list(result['missing_tasks'])),
+            'missing_tasks': result['missing_tasks'],
+            'old_tasks': result['old_tasks'],
+            'new_tasks': result['new_tasks'],
+            'new_features': result['new_features'],
+            'common_tasks': result['common_tasks'],
             'analysis': result['analysis'],
             'total_time': result['total_time'],
             'error': result.get('error'),
             'old_commits_count': result.get('old_commits_count', 0),
             'new_commits_count': result.get('new_commits_count', 0),
-            'old_tasks_count': len(result['old_tasks']),
-            'new_tasks_count': len(result['new_tasks'])
+            'detailed_analysis': result.get('detailed_analysis')
         }
 
     def analyze_new_features(self, old_version: str, new_version: str) -> Dict[str, Any]:
@@ -229,14 +298,17 @@ class TaskLossDetector:
         # 调用核心分析方法
         result = self._analyze_version_tasks(old_version, new_version)
         
-        # 返回新增features的结果
+        # 返回新增features的结果，包含完整的分析数据
         return {
-            'new_features': sorted(list(result['new_features'])),
+            'new_features': result['new_features'],
+            'old_tasks': result['old_tasks'],
+            'new_tasks': result['new_tasks'],
+            'missing_tasks': result['missing_tasks'],
+            'common_tasks': result['common_tasks'],
             'analysis': result['analysis'],
             'total_time': result['total_time'],
             'error': result.get('error'),
             'old_commits_count': result.get('old_commits_count', 0),
             'new_commits_count': result.get('new_commits_count', 0),
-            'old_tasks_count': len(result['old_tasks']),
-            'new_tasks_count': len(result['new_tasks'])
+            'detailed_analysis': result.get('detailed_analysis')
         } 

@@ -228,8 +228,13 @@ class VersionComparisonService:
                 commit_messages_with_tasks = self.gitlab_manager.extract_commit_messages_with_tasks(commits)
                 
                 found_commits = []
-                for commit_message, extracted_task_id in commit_messages_with_tasks.items():
+                for commit_key, extracted_task_id in commit_messages_with_tasks.items():
                     if extracted_task_id == task_id:
+                        # commit_key的格式是 "task_id||first_line"，提取第一行作为commit message
+                        if '||' in commit_key:
+                            commit_message = commit_key.split('||')[1]
+                        else:
+                            commit_message = commit_key
                         found_commits.append(commit_message)
                 
                 elapsed = time.time() - start_time
