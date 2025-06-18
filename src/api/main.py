@@ -11,6 +11,8 @@ import logging
 from typing import Dict, Any, List, Optional
 from fastapi import FastAPI, HTTPException, Query, Path
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
@@ -45,6 +47,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 挂载静态文件服务 - 为前端静态资源提供服务
+app.mount("/static", StaticFiles(directory="."), name="static")
 
 # 全局服务实例
 version_service: Optional[VersionComparisonService] = None
@@ -125,8 +130,13 @@ async def startup_event():
 
 
 @app.get("/")
-async def root():
-    """根路径 - API信息"""
+async def serve_frontend():
+    """根路径 - 返回前端网页"""
+    return FileResponse("index.html")
+
+@app.get("/api")
+async def api_info():
+    """API信息"""
     return {
         "name": "版本比较工具 API",
         "version": "2.0.0",
@@ -139,7 +149,8 @@ async def root():
             "去掉缓存，简化逻辑"
         ],
         "endpoints": {
-            "GET /": "API信息",
+            "GET /": "前端静态网页",
+            "GET /api": "API信息",
             "GET /health": "健康检查",
             "POST /analyze-new-features": "分析新增features",
             "POST /detect-missing-tasks": "检测缺失tasks",
