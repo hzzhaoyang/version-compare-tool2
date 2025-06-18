@@ -261,6 +261,65 @@
             color: #667eea;
             margin-bottom: 10px;
             font-size: 1.1rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .help-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 18px;
+            height: 18px;
+            background: #667eea;
+            color: white;
+            border-radius: 50%;
+            font-size: 12px;
+            font-weight: bold;
+            cursor: help;
+            position: relative;
+        }
+
+        .help-btn:hover::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            bottom: 25px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #333;
+            color: white;
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: normal;
+            white-space: normal;
+            z-index: 1000;
+            width: 280px;
+            text-align: left;
+            line-height: 1.5;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+        }
+
+        .help-btn:hover::before {
+            content: '';
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            border: 5px solid transparent;
+            border-top-color: #333;
+            z-index: 1001;
+        }
+
+        .task-link {
+            color: #667eea;
+            text-decoration: underline;
+            cursor: pointer;
+        }
+
+        .task-link:hover {
+            color: #5a6fd8;
         }
     </style>
 </head>
@@ -274,12 +333,41 @@
         <div class="content">
             <!-- 标签页 -->
             <div class="tabs">
-                <button class="tab active" onclick="switchTab('new-features')">🆕 分析新增功能</button>
-                <button class="tab" onclick="switchTab('missing-tasks')">🔍 检测缺失任务</button>
+                <button class="tab active" onclick="switchTab('missing-tasks')">🔍 检测缺失任务</button>
+                <button class="tab" onclick="switchTab('new-features')">🆕 分析新增功能</button>
+            </div>
+
+            <!-- 检测缺失任务 -->
+            <div id="missing-tasks" class="tab-content active">
+                <form id="missingTasksForm">
+                    <div class="version-inputs">
+                        <div class="form-group">
+                            <label for="oldVersionTasks">旧版本:</label>
+                            <input type="text" id="oldVersionTasks" placeholder="例如: 6.6.0-ZSJJ-5" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="newVersionTasks">新版本:</label>
+                            <input type="text" id="newVersionTasks" placeholder="例如: 7.1.0-hf37" required>
+                        </div>
+                    </div>
+                    <button type="submit" class="submit-btn">🔍 开始检测缺失任务</button>
+                </form>
+
+                <div id="missingTasksLoading" class="loading">
+                    <div class="spinner"></div>
+                    <p>正在检测缺失任务，请稍候...</p>
+                </div>
+
+                <div id="missingTasksResults" class="results" style="display: none;">
+                    <h3>📊 缺失任务检测结果</h3>
+                    <div id="missingTasksStats" class="stats-grid"></div>
+                    <div id="missingTasksDetails" class="results-list"></div>
+                    <div id="missingTasksDetailedAnalysis" class="detailed-analysis"></div>
+                </div>
             </div>
 
             <!-- 分析新增功能 -->
-            <div id="new-features" class="tab-content active">
+            <div id="new-features" class="tab-content">
                 <form id="newFeaturesForm">
                     <div class="version-inputs">
                         <div class="form-group">
@@ -306,39 +394,46 @@
                     <div id="newFeaturesDetailedAnalysis" class="detailed-analysis"></div>
                 </div>
             </div>
-
-            <!-- 检测缺失任务 -->
-            <div id="missing-tasks" class="tab-content">
-                <form id="missingTasksForm">
-                    <div class="version-inputs">
-                        <div class="form-group">
-                            <label for="oldVersionTasks">旧版本:</label>
-                            <input type="text" id="oldVersionTasks" placeholder="例如: v1.0.0" required>
-                        </div>
-                        <div class="form-group">
-                            <label for="newVersionTasks">新版本:</label>
-                            <input type="text" id="newVersionTasks" placeholder="例如: v1.1.0" required>
-                        </div>
-                    </div>
-                    <button type="submit" class="submit-btn">🔍 开始检测缺失任务</button>
-                </form>
-
-                <div id="missingTasksLoading" class="loading">
-                    <div class="spinner"></div>
-                    <p>正在检测缺失任务，请稍候...</p>
-                </div>
-
-                <div id="missingTasksResults" class="results" style="display: none;">
-                    <h3>📊 缺失任务检测结果</h3>
-                    <div id="missingTasksStats" class="stats-grid"></div>
-                    <div id="missingTasksDetails" class="results-list"></div>
-                    <div id="missingTasksDetailedAnalysis" class="detailed-analysis"></div>
-                </div>
-            </div>
         </div>
     </div>
 
     <script>
+        // 全局配置
+        let taskUrlPrefix = '';
+
+        // 获取任务链接前缀配置
+        async function getTaskUrlPrefix() {
+            try {
+                const response = await fetch('/api/config');
+                if (response.ok) {
+                    const data = await response.json();
+                    taskUrlPrefix = data.task_url_prefix || '';
+                }
+            } catch (error) {
+                console.warn('无法获取任务链接前缀配置:', error);
+            }
+        }
+
+        // 创建带超链接的任务文本
+        function createTaskLink(taskText) {
+            if (!taskUrlPrefix) return taskText;
+            
+            // 匹配TASK-XXXXX格式的任务号
+            const taskPattern = /([A-Z]+-\d+)/g;
+            return taskText.replace(taskPattern, (match) => {
+                const taskUrl = taskUrlPrefix + match;
+                return `<a href="${taskUrl}" target="_blank" class="task-link">${match}</a>`;
+            });
+        }
+
+        // 创建带提示的标题
+        function createHelpTitle(title, tooltip) {
+            return `
+                ${title}
+                <span class="help-btn" data-tooltip="${tooltip}">?</span>
+            `;
+        }
+
         // 标签页切换
         function switchTab(tabName) {
             // 隐藏所有标签页内容
@@ -451,7 +546,7 @@
                 detailsDiv.innerHTML = `
                     <h4>🆕 新增功能列表 (${data.new_features.length}项)</h4>
                     <ul>
-                        ${data.new_features.map(feature => `<li>${feature}</li>`).join('')}
+                        ${data.new_features.map(feature => `<li>${createTaskLink(feature)}</li>`).join('')}
                     </ul>
                 `;
             } else {
@@ -464,18 +559,18 @@
                 analysisDiv.innerHTML = `
                     <h4>📈 详细分析</h4>
                     <div class="analysis-section">
-                        <h5>完全新增任务 (${analysis.completely_new_tasks.length})</h5>
+                        <h5>${createHelpTitle('完全新增任务 (' + analysis.completely_new_tasks.length + ')', '完全新增任务：在旧版本中完全不存在，在新版本中首次出现的任务。这些任务代表全新的功能或特性。')}</h5>
                         <ul>
-                            ${analysis.completely_new_tasks.map(task => `<li>${task}</li>`).join('')}
+                            ${analysis.completely_new_tasks.map(task => `<li>${createTaskLink(task)}</li>`).join('')}
                         </ul>
                     </div>
                     <div class="analysis-section">
-                        <h5>部分新增任务</h5>
+                        <h5>${createHelpTitle('部分新增任务', '部分新增任务：在旧版本中已存在但有新的提交记录的任务。这些任务可能是功能增强、bug修复或持续开发。')}</h5>
                         ${Object.entries(analysis.partially_new_tasks).map(([task, commits]) => `
                             <div style="margin-bottom: 10px;">
-                                <strong>${task}:</strong>
+                                <strong>${createTaskLink(task)}:</strong>
                                 <ul style="margin-left: 20px;">
-                                    ${commits.map(commit => `<li>${commit}</li>`).join('')}
+                                    ${commits.map(commit => `<li>${createTaskLink(commit)}</li>`).join('')}
                                 </ul>
                             </div>
                         `).join('')}
@@ -550,7 +645,7 @@
                 detailsDiv.innerHTML = `
                     <h4>❌ 缺失任务列表 (${data.missing_tasks.length}项)</h4>
                     <ul>
-                        ${data.missing_tasks.map(task => `<li>${task}</li>`).join('')}
+                        ${data.missing_tasks.map(task => `<li>${createTaskLink(task)}</li>`).join('')}
                     </ul>
                 `;
             } else {
@@ -563,18 +658,18 @@
                 analysisDiv.innerHTML = `
                     <h4>📈 详细分析</h4>
                     <div class="analysis-section">
-                        <h5>完全缺失任务 (${analysis.completely_missing_tasks.length})</h5>
+                        <h5>${createHelpTitle('完全缺失任务 (' + analysis.completely_missing_tasks.length + ')', '完全缺失任务：在旧版本中存在但在新版本中完全消失的任务。这可能表示功能被移除、重构或任务已完成。')}</h5>
                         <ul>
-                            ${analysis.completely_missing_tasks.map(task => `<li>${task}</li>`).join('')}
+                            ${analysis.completely_missing_tasks.map(task => `<li>${createTaskLink(task)}</li>`).join('')}
                         </ul>
                     </div>
                     <div class="analysis-section">
-                        <h5>部分缺失任务</h5>
+                        <h5>${createHelpTitle('部分缺失任务', '部分缺失任务：在旧版本中存在某些提交记录，但在新版本中这些特定提交缺失的任务。可能是部分功能回滚或选择性合并。')}</h5>
                         ${Object.entries(analysis.partially_missing_tasks).map(([task, commits]) => `
                             <div style="margin-bottom: 10px;">
-                                <strong>${task}:</strong>
+                                <strong>${createTaskLink(task)}:</strong>
                                 <ul style="margin-left: 20px;">
-                                    ${commits.map(commit => `<li>${commit}</li>`).join('')}
+                                    ${commits.map(commit => `<li>${createTaskLink(commit)}</li>`).join('')}
                                 </ul>
                             </div>
                         `).join('')}
@@ -588,6 +683,7 @@
         // 页面加载完成后的初始化
         document.addEventListener('DOMContentLoaded', function() {
             console.log('版本比较工具前端已加载');
+            getTaskUrlPrefix(); // 获取任务链接前缀配置
         });
     </script>
 </body>

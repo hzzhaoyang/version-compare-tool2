@@ -132,7 +132,9 @@ async def startup_event():
 @app.get("/")
 async def serve_frontend():
     """根路径 - 返回前端网页"""
-    return FileResponse("index.html")
+    import os
+    current_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    return FileResponse(os.path.join(current_dir, "index.html"))
 
 @app.get("/api")
 async def api_info():
@@ -151,6 +153,7 @@ async def api_info():
         "endpoints": {
             "GET /": "前端静态网页",
             "GET /api": "API信息",
+            "GET /api/config": "前端配置信息",
             "GET /health": "健康检查",
             "POST /analyze-new-features": "分析新增features",
             "POST /detect-missing-tasks": "检测缺失tasks",
@@ -159,6 +162,13 @@ async def api_info():
             "POST /validate-versions": "验证版本",
             "GET /statistics/{from_version}/{to_version}": "获取统计信息"
         }
+    }
+
+@app.get("/api/config")
+async def get_frontend_config():
+    """获取前端配置信息"""
+    return {
+        "task_url_prefix": os.getenv("TASK_URL_PREFIX", "")
     }
 
 
