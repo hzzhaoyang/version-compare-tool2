@@ -566,14 +566,11 @@
                     </div>
                     <div class="analysis-section">
                         <h5>${createHelpTitle('部分新增任务', '部分新增任务：在旧版本中已存在但有新的提交记录的任务。这些任务可能是功能增强、bug修复或持续开发。')}</h5>
-                        ${Object.entries(analysis.partially_new_tasks).map(([task, commits]) => `
-                            <div style="margin-bottom: 10px;">
-                                <strong>${createTaskLink(task)}:</strong>
-                                <ul style="margin-left: 20px;">
-                                    ${commits.map(commit => `<li>${createTaskLink(commit)}</li>`).join('')}
-                                </ul>
-                            </div>
-                        `).join('')}
+                        <ul>
+                            ${Object.entries(analysis.partially_new_tasks).map(([task, commits]) => 
+                                commits.map(commit => `<li>${createTaskLink(commit)}</li>`).join('')
+                            ).join('')}
+                        </ul>
                     </div>
                 `;
             }
@@ -665,14 +662,11 @@
                     </div>
                     <div class="analysis-section">
                         <h5>${createHelpTitle('部分缺失任务', '部分缺失任务：在旧版本中存在某些提交记录，但在新版本中这些特定提交缺失的任务。可能是部分功能回滚或选择性合并。')}</h5>
-                        ${Object.entries(analysis.partially_missing_tasks).map(([task, commits]) => `
-                            <div style="margin-bottom: 10px;">
-                                <strong>${createTaskLink(task)}:</strong>
-                                <ul style="margin-left: 20px;">
-                                    ${commits.map(commit => `<li>${createTaskLink(commit)}</li>`).join('')}
-                                </ul>
-                            </div>
-                        `).join('')}
+                        <ul>
+                            ${Object.entries(analysis.partially_missing_tasks).map(([task, commits]) => 
+                                commits.map(commit => `<li>${createTaskLink(commit)}</li>`).join('')
+                            ).join('')}
+                        </ul>
                     </div>
                 `;
             }

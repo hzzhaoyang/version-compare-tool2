@@ -290,6 +290,21 @@ class TaskLossDetector:
         # 调用核心分析方法
         result = self._analyze_version_tasks(old_version, new_version)
         
+        # 格式化部分缺失任务的commit messages，去除重复任务号
+        def format_commit_message(msg):
+            if '||' in msg:
+                return msg.split('||', 1)[1]
+            return msg
+        
+        detailed_analysis = result.get('detailed_analysis', {})
+        if detailed_analysis:
+            # 格式化部分缺失任务
+            formatted_partially_missing_tasks = {}
+            for task_id, commits in detailed_analysis.get('partially_missing_tasks', {}).items():
+                formatted_partially_missing_tasks[task_id] = [format_commit_message(commit) for commit in commits]
+            
+            detailed_analysis['partially_missing_tasks'] = formatted_partially_missing_tasks
+        
         # 返回缺失tasks的结果，包含完整的分析数据
         return {
             'missing_tasks': result['missing_tasks'],
@@ -302,7 +317,7 @@ class TaskLossDetector:
             'error': result.get('error'),
             'old_commits_count': result.get('old_commits_count', 0),
             'new_commits_count': result.get('new_commits_count', 0),
-            'detailed_analysis': result.get('detailed_analysis')
+            'detailed_analysis': detailed_analysis
         }
 
     def analyze_new_features(self, old_version: str, new_version: str) -> Dict[str, Any]:
@@ -333,6 +348,19 @@ class TaskLossDetector:
             else:
                 # 没有 '||' 分隔符，直接使用原始message
                 new_commit_messages.append(commit_msg)
+        
+        # 处理部分新增任务的格式，去除重复任务号
+        def format_commit_message(msg):
+            if '||' in msg:
+                return msg.split('||', 1)[1]
+            return msg
+        
+        # 格式化部分新增任务
+        formatted_partially_new_tasks = {}
+        for task_id, commits in filtered_detailed_analysis.get('partially_new_tasks', {}).items():
+            formatted_partially_new_tasks[task_id] = [format_commit_message(commit) for commit in commits]
+        
+        filtered_detailed_analysis['partially_new_tasks'] = formatted_partially_new_tasks
         
         return {
             'new_features': new_commit_messages,  # 返回优化后的commit message列表
