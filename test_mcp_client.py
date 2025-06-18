@@ -38,6 +38,22 @@ async def test_mcp_tools():
             for tool in tools.tools:
                 print(f"  - {tool.name}: {tool.description}")
             
+            # 测试列出支持的项目
+            print("\n🏢 测试列出支持的项目...")
+            try:
+                result = await session.call_tool(
+                    "list-supported-projects",
+                    arguments={}
+                )
+                print("✅ 项目列表获取结果:")
+                for content in result.content:
+                    if hasattr(content, 'text'):
+                        print(content.text)
+                    else:
+                        print(content)
+            except Exception as e:
+                print(f"❌ 项目列表获取失败: {e}")
+            
             # 测试分析新增功能
             print("\n🆕 测试分析新增功能...")
             try:

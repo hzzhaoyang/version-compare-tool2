@@ -242,11 +242,11 @@ class TaskLossDetector:
             logger.info(f"[{self._timestamp()}] " + "="*80)
             
             return {
-                'old_tasks': old_tasks,
-                'new_tasks': new_tasks,
-                'missing_tasks': all_missing_tasks,
+                'old_tasks': list(old_tasks),  # 转换为list
+                'new_tasks': list(new_tasks),  # 转换为list
+                'missing_tasks': list(all_missing_tasks),  # 转换为list
                 'new_features': new_features_with_commits,
-                'common_tasks': common_tasks,
+                'common_tasks': list(common_tasks),  # 转换为list
                 'analysis': 'success',
                 'total_time': total_time,
                 'performance_improvement': performance_improvement,
@@ -256,12 +256,12 @@ class TaskLossDetector:
                 'new_commits_count': len(new_commits),
                 # 新增详细分析结果
                 'detailed_analysis': {
-                    'completely_missing_tasks': completely_missing_tasks,
+                    'completely_missing_tasks': list(completely_missing_tasks),  # 转换为list
                     'partially_missing_tasks': partially_missing_tasks,
-                    'completely_new_tasks': completely_new_tasks,
+                    'completely_new_tasks': list(completely_new_tasks),  # 转换为list
                     'partially_new_tasks': partially_new_tasks,
-                    'missing_commit_messages': missing_messages,
-                    'new_commit_messages': new_messages_only
+                    'missing_commit_messages': list(missing_messages),  # 转换为list
+                    'new_commit_messages': list(new_messages_only)  # 转换为list
                 }
             }
             
@@ -271,11 +271,11 @@ class TaskLossDetector:
             import traceback
             logger.error(f"[{self._timestamp()}] 📍 错误堆栈: {traceback.format_exc()}")
             return {
-                'old_tasks': set(),
-                'new_tasks': set(),
-                'missing_tasks': set(),
-                'new_features': set(),
-                'common_tasks': set(),
+                'old_tasks': [],  # 转换为list
+                'new_tasks': [],  # 转换为list
+                'missing_tasks': [],  # 转换为list
+                'new_features': [],  # 转换为list
+                'common_tasks': [],  # 转换为list
                 'error': str(e),
                 'analysis': 'error',
                 'total_time': total_time
@@ -332,9 +332,9 @@ class TaskLossDetector:
         # 只返回新增features相关的结果
         detailed_analysis = result.get('detailed_analysis', {})
         filtered_detailed_analysis = {
-            'completely_new_tasks': detailed_analysis.get('completely_new_tasks', set()),
+            'completely_new_tasks': detailed_analysis.get('completely_new_tasks', []),  # 转换为list
             'partially_new_tasks': detailed_analysis.get('partially_new_tasks', {}),
-            'new_commit_messages': detailed_analysis.get('new_commit_messages', set())
+            'new_commit_messages': detailed_analysis.get('new_commit_messages', [])  # 转换为list
         }
         
         # 处理新增的commit messages，优化格式：从 "GALAXY-25259||GALAXY-25259【Bug】thirdparty data router add" 

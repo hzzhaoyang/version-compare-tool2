@@ -7,6 +7,7 @@
 ### MCP 工具
 - **analyze-new-features**: 分析两个版本之间的新增功能和特性
 - **detect-missing-tasks**: 检测两个版本之间缺失的任务和功能
+- **list-supported-projects**: 列出所有支持的GitLab项目配置（无需参数）
 
 ### 支持的运行模式
 1. **标准IO模式**: 通过stdin/stdout进行通信
@@ -118,6 +119,17 @@ python3 test_mcp_client.py
 - 完全缺失任务列表
 - 部分缺失任务列表
 
+### list-supported-projects
+
+**描述**: 列出所有支持的GitLab项目配置信息
+
+**参数**: 无参数
+
+**返回**:
+- 项目配置列表
+- 项目ID、名称、URL等信息
+- 当前连接状态
+
 ## 📝 使用示例
 
 ### 在AI助手中调用
@@ -133,6 +145,12 @@ AI助手将自动调用 `analyze-new-features` 工具并返回结果。
 ```
 
 AI助手将自动调用 `detect-missing-tasks` 工具并返回结果。
+
+```
+请列出所有支持的GitLab项目
+```
+
+AI助手将自动调用 `list-supported-projects` 工具并返回当前配置的所有项目信息。
 
 ## 🛠️ 开发说明
 

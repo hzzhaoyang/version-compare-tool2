@@ -4,7 +4,6 @@
 GitLab API管理器 v2
 基于并发分页获取的高性能版本，简化逻辑，增强日志
 """
-import gitlab
 import re
 import time
 import logging
@@ -12,6 +11,15 @@ from typing import List, Dict, Any, Optional, Set
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 import requests
+
+# 确保导入正确的gitlab包，避免与本地模块冲突
+import sys
+import importlib
+# 临时移除本地路径，确保导入python-gitlab包
+current_path = sys.path[:]
+sys.path = [p for p in sys.path if not p.endswith('src')]
+gitlab = importlib.import_module('gitlab')
+sys.path = current_path
 
 
 logger = logging.getLogger(__name__)

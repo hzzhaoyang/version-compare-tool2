@@ -14,7 +14,16 @@ from mcp.server import NotificationOptions, Server
 from mcp import types
 import mcp.server.stdio
 
-from services.version_service import VersionComparisonService
+import sys
+import os
+# 添加项目根目录到Python路径，以支持绝对导入
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+# 加载环境变量
+from dotenv import load_dotenv
+load_dotenv()
+
+from src.services.version_service import VersionComparisonService
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -56,6 +65,15 @@ async def handle_list_tools() -> List[types.Tool]:
     """列出可用的工具"""
     return [
         types.Tool(
+            name="list-supported-projects",
+            description="列出所有支持的GitLab项目配置",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        ),
+        types.Tool(
             name="analyze-new-features",
             description="分析两个版本之间的新增功能和特性",
             inputSchema={
@@ -68,6 +86,11 @@ async def handle_list_tools() -> List[types.Tool]:
                     "new_version": {
                         "type": "string", 
                         "description": "新版本号"
+                    },
+                    "project": {
+                        "type": "string",
+                        "description": "项目key (可选，不指定则使用默认项目)",
+                        "default": ""
                     }
                 },
                 "required": ["old_version", "new_version"]
@@ -86,6 +109,11 @@ async def handle_list_tools() -> List[types.Tool]:
                     "new_version": {
                         "type": "string",
                         "description": "新版本号"
+                    },
+                    "project": {
+                        "type": "string",
+                        "description": "项目key (可选，不指定则使用默认项目)",
+                        "default": ""
                     }
                 },
                 "required": ["old_version", "new_version"]
@@ -104,14 +132,48 @@ async def handle_call_tool(
         initialize_version_service()
     
     try:
+        if name == "list-supported-projects":
+            # 获取支持的项目列表
+            projects = version_service.get_available_projects()
+            current_project = version_service.current_project
+            
+            # 格式化项目信息
+            project_info = {
+                "current_project": {
+                    "key": current_project.project_key,
+                    "name": current_project.name,
+                    "project_id": current_project.project_id
+                },
+                "all_projects": projects,
+                "gitlab_url": version_service.gitlab_url
+            }
+            
+            formatted_result = json.dumps(project_info, indent=2, ensure_ascii=False)
+            
+            return [types.TextContent(
+                type="text",
+                text=f"支持的GitLab项目配置:\n\n{formatted_result}"
+            )]
+        
+        # 处理需要版本参数的工具
         old_version = arguments.get("old_version")
-        new_version = arguments.get("new_version") 
+        new_version = arguments.get("new_version")
+        project_key = arguments.get("project", "")
         
         if not old_version or not new_version:
             return [types.TextContent(
                 type="text",
                 text="错误: 缺少必需的参数 old_version 或 new_version"
             )]
+        
+        # 如果指定了项目，切换到该项目
+        if project_key and project_key != version_service.current_project.project_key:
+            success = version_service.switch_project(project_key)
+            if not success:
+                return [types.TextContent(
+                    type="text",
+                    text=f"错误: 无法切换到项目 {project_key}，请检查项目配置"
+                )]
         
         if name == "analyze-new-features":
             # 调用新增功能分析（同步方法）
@@ -120,9 +182,10 @@ async def handle_call_tool(
             # 格式化结果为JSON字符串
             formatted_result = json.dumps(result, indent=2, ensure_ascii=False)
             
+            project_info = f"项目: {version_service.current_project.name}"
             return [types.TextContent(
                 type="text",
-                text=f"版本 {old_version} -> {new_version} 新增功能分析结果:\n\n{formatted_result}"
+                text=f"{project_info}\n版本 {old_version} -> {new_version} 新增功能分析结果:\n\n{formatted_result}"
             )]
             
         elif name == "detect-missing-tasks":
@@ -132,9 +195,10 @@ async def handle_call_tool(
             # 格式化结果为JSON字符串
             formatted_result = json.dumps(result, indent=2, ensure_ascii=False)
             
+            project_info = f"项目: {version_service.current_project.name}"
             return [types.TextContent(
                 type="text",
-                text=f"版本 {old_version} -> {new_version} 缺失任务检测结果:\n\n{formatted_result}"
+                text=f"{project_info}\n版本 {old_version} -> {new_version} 缺失任务检测结果:\n\n{formatted_result}"
             )]
             
         else:
