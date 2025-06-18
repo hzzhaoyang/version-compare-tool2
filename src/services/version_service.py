@@ -2,41 +2,151 @@
 # -*- coding: utf-8 -*-
 """
 版本比较服务 v2
-使用高性能的GitLab Manager和Task Detector
+使用高性能的GitLab Manager和Task Detector，支持多项目配置
 """
 import os
 import time
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from ..gitlab.gitlab_manager import GitLabManager
 from ..core.task_detector import TaskLossDetector
 
 logger = logging.getLogger(__name__)
 
 
-class VersionComparisonService:
-    """版本比较服务 v2 - 高性能版本"""
+class ProjectConfig:
+    """项目配置类"""
+    def __init__(self, project_key: str, name: str, project_id: str, token: str):
+        self.project_key = project_key
+        self.name = name
+        self.project_id = project_id
+        self.token = token
     
-    def __init__(self):
+    def __repr__(self):
+        return f"ProjectConfig(key={self.project_key}, name={self.name}, id={self.project_id})"
+
+
+class VersionComparisonService:
+    """版本比较服务 v2 - 高性能版本，支持多项目"""
+    
+    def __init__(self, project_key: Optional[str] = None):
         # 从环境变量获取配置
         self.gitlab_url = os.getenv('GITLAB_URL', 'https://gitlab.mayidata.com')
-        self.gitlab_token = os.getenv('GITLAB_TOKEN')
-        self.project_id = os.getenv('GITLAB_PROJECT_ID', '130')
         
-        if not self.gitlab_token:
-            raise ValueError("GITLAB_TOKEN环境变量未设置")
+        # 支持的项目配置
+        self.projects = self._load_project_configs()
+        
+        # 当前项目配置
+        self.current_project = self._get_project_config(project_key)
+        
+        if not self.current_project:
+            raise ValueError(f"无法找到项目配置: {project_key}")
         
         # 初始化核心组件
         self.gitlab_manager = GitLabManager(
             self.gitlab_url, 
-            self.gitlab_token, 
-            self.project_id
+            self.current_project.token, 
+            self.current_project.project_id
         )
         self.task_detector = TaskLossDetector(self.gitlab_manager)
         
         logger.info(f"🚀 VersionComparisonService v2 初始化完成")
         logger.info(f"   GitLab URL: {self.gitlab_url}")
-        logger.info(f"   Project ID: {self.project_id}")
+        logger.info(f"   当前项目: {self.current_project.name} (ID: {self.current_project.project_id})")
+    
+    def _load_project_configs(self) -> Dict[str, ProjectConfig]:
+        """加载所有项目配置"""
+        projects = {}
+        
+        # 预定义的项目列表
+        project_definitions = {
+            'bi-server': 'BI Server',
+            'guandata-web': 'Guandata Web',
+            'complex-report-pro': 'Complex Report Pro',
+            'data-mind': 'Data Mind',
+            'data-synapse': 'Data Synapse'
+        }
+        
+        for project_key, project_name in project_definitions.items():
+            # 获取项目的token和ID
+            token_key = f'GITLAB_TOKEN_{project_key.upper().replace("-", "_")}'
+            id_key = f'GITLAB_PROJECT_ID_{project_key.upper().replace("-", "_")}'
+            
+            token = os.getenv(token_key)
+            project_id = os.getenv(id_key)
+            
+            if token and project_id:
+                projects[project_key] = ProjectConfig(
+                    project_key=project_key,
+                    name=project_name,
+                    project_id=project_id,
+                    token=token
+                )
+                logger.info(f"✅ 加载项目配置: {project_name} (ID: {project_id})")
+            else:
+                logger.warning(f"⚠️ 项目配置不完整: {project_name} - 缺少 {token_key} 或 {id_key}")
+        
+        # 向后兼容性 - 如果设置了旧的环境变量
+        legacy_token = os.getenv('GITLAB_TOKEN')
+        legacy_project_id = os.getenv('GITLAB_PROJECT_ID')
+        if legacy_token and legacy_project_id and 'bi-server' not in projects:
+            projects['bi-server'] = ProjectConfig(
+                project_key='bi-server',
+                name='BI Server (Legacy)',
+                project_id=legacy_project_id,
+                token=legacy_token
+            )
+            logger.info(f"✅ 加载传统配置: BI Server (ID: {legacy_project_id})")
+        
+        if not projects:
+            raise ValueError("未找到任何有效的项目配置")
+        
+        logger.info(f"📊 总计加载 {len(projects)} 个项目配置")
+        return projects
+    
+    def _get_project_config(self, project_key: Optional[str]) -> Optional[ProjectConfig]:
+        """获取项目配置"""
+        if project_key and project_key in self.projects:
+            return self.projects[project_key]
+        
+        # 如果没有指定项目，使用第一个可用的项目
+        if self.projects:
+            default_key = list(self.projects.keys())[0]
+            logger.info(f"🔄 使用默认项目: {default_key}")
+            return self.projects[default_key]
+        
+        return None
+    
+    def get_available_projects(self) -> List[Dict[str, str]]:
+        """获取可用的项目列表"""
+        return [
+            {
+                'key': config.project_key,
+                'name': config.name,
+                'project_id': config.project_id
+            }
+            for config in self.projects.values()
+        ]
+    
+    def switch_project(self, project_key: str) -> bool:
+        """切换到指定项目"""
+        if project_key not in self.projects:
+            logger.error(f"❌ 项目不存在: {project_key}")
+            return False
+        
+        old_project = self.current_project
+        self.current_project = self.projects[project_key]
+        
+        # 重新初始化GitLab管理器
+        self.gitlab_manager = GitLabManager(
+            self.gitlab_url,
+            self.current_project.token,
+            self.current_project.project_id
+        )
+        self.task_detector = TaskLossDetector(self.gitlab_manager)
+        
+        logger.info(f"🔄 项目切换: {old_project.name} -> {self.current_project.name}")
+        return True
     
     def detect_missing_tasks(self, old_version: str, new_version: str) -> Dict[str, Any]:
         """
@@ -63,7 +173,7 @@ class VersionComparisonService:
                 'service_version': 'v2',
                 'total_elapsed': elapsed,
                 'gitlab_url': self.gitlab_url,
-                'project_id': self.project_id
+                'project_id': self.current_project.project_id
             }
             
             return result
@@ -80,7 +190,7 @@ class VersionComparisonService:
                     'service_version': 'v2',
                     'total_elapsed': elapsed,
                     'gitlab_url': self.gitlab_url,
-                    'project_id': self.project_id
+                    'project_id': self.current_project.project_id
                 }
             }
     
@@ -109,7 +219,7 @@ class VersionComparisonService:
                 'service_version': 'v2',
                 'total_elapsed': elapsed,
                 'gitlab_url': self.gitlab_url,
-                'project_id': self.project_id
+                'project_id': self.current_project.project_id
             }
             
             return result
@@ -126,7 +236,7 @@ class VersionComparisonService:
                     'service_version': 'v2',
                     'total_elapsed': elapsed,
                     'gitlab_url': self.gitlab_url,
-                    'project_id': self.project_id
+                    'project_id': self.current_project.project_id
                 }
             }
     

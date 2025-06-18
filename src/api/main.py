@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 版本比较工具 API
-基于FastAPI的高性能版本比较服务
+基于FastAPI的高性能版本比较服务，支持多项目配置
 """
 import os
 import sys
@@ -35,8 +35,8 @@ logger = logging.getLogger(__name__)
 # 创建FastAPI应用
 app = FastAPI(
     title="版本比较工具 API",
-    description="基于GitLab的高性能版本比较和task分析工具",
-    version="2.0.0"
+    description="基于GitLab的高性能版本比较和task分析工具，支持多项目配置",
+    version="2.1.0"
 )
 
 # 添加CORS中间件
@@ -51,27 +51,56 @@ app.add_middleware(
 # 挂载静态文件服务 - 为前端静态资源提供服务
 app.mount("/static", StaticFiles(directory="."), name="static")
 
-# 全局服务实例
-version_service: Optional[VersionComparisonService] = None
+# 全局服务实例缓存
+version_services: Dict[str, VersionComparisonService] = {}
+
+
+def get_version_service(project_key: Optional[str] = None) -> VersionComparisonService:
+    """获取版本服务实例（支持多项目）"""
+    # 如果没有指定项目，使用第一个可用的服务
+    if project_key is None:
+        if version_services:
+            return list(version_services.values())[0]
+        # 创建默认服务
+        service = VersionComparisonService()
+        version_services[service.current_project.project_key] = service
+        return service
+    
+    # 检查是否已存在该项目的服务
+    if project_key in version_services:
+        return version_services[project_key]
+    
+    # 创建新的服务实例
+    try:
+        service = VersionComparisonService(project_key)
+        version_services[project_key] = service
+        return service
+    except Exception as e:
+        logger.error(f"❌ 创建项目服务失败 {project_key}: {e}")
+        raise HTTPException(status_code=400, detail=f"无法创建项目服务: {project_key}")
 
 
 class VersionRequest(BaseModel):
     old_version: str
     new_version: str
+    project_key: Optional[str] = None
 
 
 class TaskAnalysisRequest(BaseModel):
     task_ids: List[str]
     version: str
+    project_key: Optional[str] = None
 
 
 class TaskSearchRequest(BaseModel):
     task_id: str
     version: Optional[str] = None
+    project_key: Optional[str] = None
 
 
 class VersionValidationRequest(BaseModel):
     versions: List[str]
+    project_key: Optional[str] = None
 
 
 class MissingTasksDetailedAnalysis(BaseModel):
@@ -100,6 +129,7 @@ class MissingTasksResponse(BaseModel):
     detailed_analysis: Optional[MissingTasksDetailedAnalysis]
     service_stats: Dict[str, Any]
     api_stats: Dict[str, Any]
+    project_info: Dict[str, str]
 
 
 class NewFeaturesResponse(BaseModel):
@@ -114,15 +144,17 @@ class NewFeaturesResponse(BaseModel):
     detailed_analysis: Optional[NewFeaturesDetailedAnalysis]
     service_stats: Dict[str, Any]
     api_stats: Dict[str, Any]
+    project_info: Dict[str, str]
 
 
 @app.on_event("startup")
 async def startup_event():
-    """应用启动时初始化服务"""
-    global version_service
+    """应用启动时初始化默认服务"""
     try:
         logger.info("🚀 初始化版本比较服务...")
-        version_service = VersionComparisonService()
+        # 创建默认服务实例
+        default_service = VersionComparisonService()
+        version_services[default_service.current_project.project_key] = default_service
         logger.info("✅ 版本比较服务初始化完成")
     except Exception as e:
         logger.error(f"❌ 服务初始化失败: {e}")
@@ -141,19 +173,21 @@ async def api_info():
     """API信息"""
     return {
         "name": "版本比较工具 API",
-        "version": "2.0.0",
-        "description": "基于GitLab的高性能版本比较和task分析工具",
+        "version": "2.1.0",
+        "description": "基于GitLab的高性能版本比较和task分析工具，支持多项目配置",
         "features": [
             "并发分页获取commits",
             "二分查找探测总页数", 
             "本地内存分析tasks",
             "详细的性能监控和日志",
-            "去掉缓存，简化逻辑"
+            "多项目支持",
+            "项目动态切换"
         ],
         "endpoints": {
             "GET /": "前端静态网页",
             "GET /api": "API信息",
             "GET /api/config": "前端配置信息",
+            "GET /api/projects": "获取可用项目列表",
             "GET /health": "健康检查",
             "POST /analyze-new-features": "分析新增features",
             "POST /detect-missing-tasks": "检测缺失tasks",
@@ -172,17 +206,41 @@ async def get_frontend_config():
     }
 
 
+@app.get("/api/projects")
+async def get_available_projects():
+    """获取可用的项目列表"""
+    try:
+        # 获取默认服务实例以获取项目列表
+        service = get_version_service()
+        projects = service.get_available_projects()
+        
+        # 添加当前选中的项目标识
+        for project in projects:
+            project['is_current'] = project['key'] == service.current_project.project_key
+        
+        return {
+            "projects": projects,
+            "current_project": service.current_project.project_key
+        }
+    except Exception as e:
+        logger.error(f"❌ 获取项目列表失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取项目列表失败: {str(e)}")
+
+
 @app.get("/health")
 async def health_check():
     """健康检查"""
-    if version_service is None:
-        raise HTTPException(status_code=503, detail="服务未初始化")
-    
-    return {
-        "status": "healthy",
-        "service_version": "2.0.0",
-        "timestamp": time.time()
-    }
+    try:
+        service = get_version_service()
+        return {
+            "status": "healthy",
+            "service_version": "2.1.0",
+            "timestamp": time.time(),
+            "current_project": service.current_project.name,
+            "available_projects": len(service.get_available_projects())
+        }
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"服务未初始化: {str(e)}")
 
 
 @app.post("/analyze-new-features", response_model=NewFeaturesResponse)
@@ -191,10 +249,11 @@ async def analyze_new_features(request: VersionRequest):
     分析新增features
     """
     api_start_time = time.time()
-    logger.info(f"🆕 API请求: 分析新增features {request.old_version} -> {request.new_version}")
+    logger.info(f"🆕 API请求: 分析新增features {request.old_version} -> {request.new_version} (项目: {request.project_key})")
     
     try:
-        result = version_service.analyze_new_features(request.old_version, request.new_version)
+        service = get_version_service(request.project_key)
+        result = service.analyze_new_features(request.old_version, request.new_version)
         api_time = time.time() - api_start_time
         
         # 检查是否有错误
@@ -214,6 +273,11 @@ async def analyze_new_features(request: VersionRequest):
                     'api_time': api_time,
                     'endpoint': '/analyze-new-features',
                     'error': result.get('error', 'Unknown error')
+                },
+                project_info={
+                    'key': service.current_project.project_key,
+                    'name': service.current_project.name,
+                    'project_id': service.current_project.project_id
                 }
             )
         
@@ -237,24 +301,31 @@ async def analyze_new_features(request: VersionRequest):
             old_tasks_count=len(result.get('old_tasks', set())),
             new_tasks_count=len(result.get('new_tasks', set())),
             detailed_analysis=detailed_analysis,
-            service_stats=version_service.get_performance_stats(),
+            service_stats=service.get_performance_stats(),
             api_stats={
                 'api_time': api_time,
                 'endpoint': '/analyze-new-features'
+            },
+            project_info={
+                'key': service.current_project.project_key,
+                'name': service.current_project.name,
+                'project_id': service.current_project.project_id
             }
         )
         
-        logger.info(f"✅ API响应: 新增features分析完成，API耗时: {api_time:.2f}s")
+        logger.info(f"✅ API响应: {len(response.new_features)} 个新features, 耗时 {api_time:.2f}s")
         return response
         
     except Exception as e:
         api_time = time.time() - api_start_time
-        logger.error(f"❌ API错误: {str(e)}")
+        error_msg = f"分析新增features失败: {str(e)}"
+        logger.error(f"❌ {error_msg}")
+        
         return NewFeaturesResponse(
             new_features=[],
             analysis="error",
             total_time=0,
-            error=str(e),
+            error=error_msg,
             old_commits_count=0,
             new_commits_count=0,
             old_tasks_count=0,
@@ -264,7 +335,12 @@ async def analyze_new_features(request: VersionRequest):
             api_stats={
                 'api_time': api_time,
                 'endpoint': '/analyze-new-features',
-                'error': str(e)
+                'error': error_msg
+            },
+            project_info={
+                'key': request.project_key or 'unknown',
+                'name': 'Unknown',
+                'project_id': 'unknown'
             }
         )
 
@@ -272,13 +348,14 @@ async def analyze_new_features(request: VersionRequest):
 @app.post("/detect-missing-tasks", response_model=MissingTasksResponse)
 async def detect_missing_tasks(request: VersionRequest):
     """
-    检测缺失的tasks
+    检测缺失tasks
     """
     api_start_time = time.time()
-    logger.info(f"🔍 API请求: 检测缺失tasks {request.old_version} -> {request.new_version}")
+    logger.info(f"🔍 API请求: 检测缺失tasks {request.old_version} -> {request.new_version} (项目: {request.project_key})")
     
     try:
-        result = version_service.detect_missing_tasks(request.old_version, request.new_version)
+        service = get_version_service(request.project_key)
+        result = service.detect_missing_tasks(request.old_version, request.new_version)
         api_time = time.time() - api_start_time
         
         # 检查是否有错误
@@ -298,6 +375,11 @@ async def detect_missing_tasks(request: VersionRequest):
                     'api_time': api_time,
                     'endpoint': '/detect-missing-tasks',
                     'error': result.get('error', 'Unknown error')
+                },
+                project_info={
+                    'key': service.current_project.project_key,
+                    'name': service.current_project.name,
+                    'project_id': service.current_project.project_id
                 }
             )
         
@@ -312,7 +394,7 @@ async def detect_missing_tasks(request: VersionRequest):
             )
         
         response = MissingTasksResponse(
-            missing_tasks=sorted(list(result.get('missing_tasks', set()))),
+            missing_tasks=result.get('missing_tasks', []),
             analysis=result.get('analysis', 'success'),
             total_time=result.get('total_time', 0),
             error=None,
@@ -321,24 +403,31 @@ async def detect_missing_tasks(request: VersionRequest):
             old_tasks_count=len(result.get('old_tasks', set())),
             new_tasks_count=len(result.get('new_tasks', set())),
             detailed_analysis=detailed_analysis,
-            service_stats=version_service.get_performance_stats(),
+            service_stats=service.get_performance_stats(),
             api_stats={
                 'api_time': api_time,
                 'endpoint': '/detect-missing-tasks'
+            },
+            project_info={
+                'key': service.current_project.project_key,
+                'name': service.current_project.name,
+                'project_id': service.current_project.project_id
             }
         )
         
-        logger.info(f"✅ API响应: 缺失tasks检测完成，API耗时: {api_time:.2f}s")
+        logger.info(f"✅ API响应: {len(response.missing_tasks)} 个缺失tasks, 耗时 {api_time:.2f}s")
         return response
         
     except Exception as e:
         api_time = time.time() - api_start_time
-        logger.error(f"❌ API错误: {str(e)}")
+        error_msg = f"检测缺失tasks失败: {str(e)}"
+        logger.error(f"❌ {error_msg}")
+        
         return MissingTasksResponse(
             missing_tasks=[],
             analysis="error",
             total_time=0,
-            error=str(e),
+            error=error_msg,
             old_commits_count=0,
             new_commits_count=0,
             old_tasks_count=0,
@@ -348,7 +437,12 @@ async def detect_missing_tasks(request: VersionRequest):
             api_stats={
                 'api_time': api_time,
                 'endpoint': '/detect-missing-tasks',
-                'error': str(e)
+                'error': error_msg
+            },
+            project_info={
+                'key': request.project_key or 'unknown',
+                'name': 'Unknown',
+                'project_id': 'unknown'
             }
         )
 
@@ -357,129 +451,134 @@ async def detect_missing_tasks(request: VersionRequest):
 async def analyze_tasks(request: TaskAnalysisRequest):
     """
     分析指定的tasks
-    
-    分析指定task IDs在指定版本中的详细信息
     """
-    if version_service is None:
-        raise HTTPException(status_code=503, detail="服务未初始化")
-    
-    logger.info(f"📊 API请求: 分析tasks {request.task_ids} in {request.version}")
+    api_start_time = time.time()
+    logger.info(f"📊 API请求: 分析tasks {request.task_ids} in {request.version} (项目: {request.project_key})")
     
     try:
-        start_time = time.time()
-        result = version_service.analyze_tasks(request.task_ids, request.version)
-        api_elapsed = time.time() - start_time
+        service = get_version_service(request.project_key)
+        result = service.analyze_tasks(request.task_ids, request.version)
+        api_time = time.time() - api_start_time
         
-        # 添加API层统计
+        logger.info(f"✅ API响应: 分析tasks完成, 耗时 {api_time:.2f}s")
         result['api_stats'] = {
-            'api_version': '2.0.0',
-            'api_elapsed': api_elapsed,
-            'request_timestamp': start_time
+            'api_time': api_time,
+            'endpoint': '/analyze-tasks'
         }
-        
-        logger.info(f"✅ API响应: tasks分析完成，API耗时: {api_elapsed:.2f}s")
+        result['project_info'] = {
+            'key': service.current_project.project_key,
+            'name': service.current_project.name,
+            'project_id': service.current_project.project_id
+        }
         return result
         
     except Exception as e:
-        logger.error(f"❌ API错误: tasks分析失败: {e}")
-        raise HTTPException(status_code=500, detail=f"分析失败: {str(e)}")
+        api_time = time.time() - api_start_time
+        error_msg = f"分析tasks失败: {str(e)}"
+        logger.error(f"❌ {error_msg}")
+        raise HTTPException(status_code=500, detail=error_msg)
 
 
 @app.post("/search-tasks")
 async def search_tasks(request: TaskSearchRequest):
     """
-    搜索tasks
-    
-    在指定版本中搜索特定的task ID
+    搜索指定的task
     """
-    if version_service is None:
-        raise HTTPException(status_code=503, detail="服务未初始化")
-    
-    logger.info(f"🔎 API请求: 搜索task {request.task_id} in {request.version}")
+    api_start_time = time.time()
+    logger.info(f"🔎 API请求: 搜索task {request.task_id} in {request.version} (项目: {request.project_key})")
     
     try:
-        start_time = time.time()
-        result = version_service.search_tasks(request.task_id, request.version)
-        api_elapsed = time.time() - start_time
+        service = get_version_service(request.project_key)
+        result = service.search_tasks(request.task_id, request.version)
+        api_time = time.time() - api_start_time
         
-        # 添加API层统计
+        logger.info(f"✅ API响应: 搜索task完成, 耗时 {api_time:.2f}s")
         result['api_stats'] = {
-            'api_version': '2.0.0',
-            'api_elapsed': api_elapsed,
-            'request_timestamp': start_time
+            'api_time': api_time,
+            'endpoint': '/search-tasks'
         }
-        
-        logger.info(f"✅ API响应: task搜索完成，API耗时: {api_elapsed:.2f}s")
+        result['project_info'] = {
+            'key': service.current_project.project_key,
+            'name': service.current_project.name,
+            'project_id': service.current_project.project_id
+        }
         return result
         
     except Exception as e:
-        logger.error(f"❌ API错误: task搜索失败: {e}")
-        raise HTTPException(status_code=500, detail=f"搜索失败: {str(e)}")
+        api_time = time.time() - api_start_time
+        error_msg = f"搜索tasks失败: {str(e)}"
+        logger.error(f"❌ {error_msg}")
+        raise HTTPException(status_code=500, detail=error_msg)
 
 
 @app.post("/validate-versions")
 async def validate_versions(request: VersionValidationRequest):
     """
-    验证版本
-    
-    验证指定的版本是否存在于GitLab中
+    验证版本是否存在
     """
-    if version_service is None:
-        raise HTTPException(status_code=503, detail="服务未初始化")
-    
-    logger.info(f"✅ API请求: 验证版本 {request.versions}")
+    api_start_time = time.time()
+    logger.info(f"✔️ API请求: 验证版本 {request.versions} (项目: {request.project_key})")
     
     try:
-        start_time = time.time()
-        result = version_service.validate_versions(request.versions)
-        api_elapsed = time.time() - start_time
+        service = get_version_service(request.project_key)
+        result = service.validate_versions(request.versions)
+        api_time = time.time() - api_start_time
         
-        # 添加API层统计
+        logger.info(f"✅ API响应: 验证版本完成, 耗时 {api_time:.2f}s")
         result['api_stats'] = {
-            'api_version': '2.0.0',
-            'api_elapsed': api_elapsed,
-            'request_timestamp': start_time
+            'api_time': api_time,
+            'endpoint': '/validate-versions'
         }
-        
-        logger.info(f"✅ API响应: 版本验证完成，API耗时: {api_elapsed:.2f}s")
+        result['project_info'] = {
+            'key': service.current_project.project_key,
+            'name': service.current_project.name,
+            'project_id': service.current_project.project_id
+        }
         return result
         
     except Exception as e:
-        logger.error(f"❌ API错误: 版本验证失败: {e}")
-        raise HTTPException(status_code=500, detail=f"验证失败: {str(e)}")
+        api_time = time.time() - api_start_time
+        error_msg = f"验证版本失败: {str(e)}"
+        logger.error(f"❌ {error_msg}")
+        raise HTTPException(status_code=500, detail=error_msg)
 
 
 @app.get("/statistics/{from_version}/{to_version}")
 async def get_statistics(
     from_version: str = Path(..., description="起始版本"),
-    to_version: str = Path(..., description="目标版本")
+    to_version: str = Path(..., description="目标版本"),
+    project_key: Optional[str] = Query(None, description="项目标识")
 ):
-    """获取版本间的统计信息"""
-    if version_service is None:
-        raise HTTPException(status_code=503, detail="服务未初始化")
-    
-    logger.info(f"📈 API请求: 获取统计信息 {from_version} -> {to_version}")
+    """
+    获取两个版本之间的统计信息
+    """
+    api_start_time = time.time()
+    logger.info(f"📈 API请求: 获取统计信息 {from_version} -> {to_version} (项目: {project_key})")
     
     try:
-        start_time = time.time()
-        result = version_service.get_version_statistics(from_version, to_version)
-        api_elapsed = time.time() - start_time
+        service = get_version_service(project_key)
+        result = service.get_version_statistics(from_version, to_version)
+        api_time = time.time() - api_start_time
         
-        # 添加API层统计
+        logger.info(f"✅ API响应: 获取统计信息完成, 耗时 {api_time:.2f}s")
         result['api_stats'] = {
-            'api_version': '2.0.0',
-            'api_elapsed': api_elapsed,
-            'request_timestamp': start_time
+            'api_time': api_time,
+            'endpoint': '/statistics'
         }
-        
-        logger.info(f"✅ API响应: 统计信息获取完成，API耗时: {api_elapsed:.2f}s")
+        result['project_info'] = {
+            'key': service.current_project.project_key,
+            'name': service.current_project.name,
+            'project_id': service.current_project.project_id
+        }
         return result
         
     except Exception as e:
-        logger.error(f"❌ API错误: 统计信息获取失败: {e}")
-        raise HTTPException(status_code=500, detail=f"获取失败: {str(e)}")
+        api_time = time.time() - api_start_time
+        error_msg = f"获取统计信息失败: {str(e)}"
+        logger.error(f"❌ {error_msg}")
+        raise HTTPException(status_code=500, detail=error_msg)
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000) 
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 5000))) 
