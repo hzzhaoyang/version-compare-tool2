@@ -180,6 +180,22 @@ class TaskLossDetector:
             # 合并所有新增的tasks（完全新增 + 部分新增）
             all_new_tasks = completely_new_tasks | set(partially_new_tasks.keys())
             
+            # 构建new_features_with_commits: 包含每个新增task及其对应的commit messages
+            new_features_with_commits = {}
+            
+            # 处理完全新增的tasks
+            for task_id in completely_new_tasks:
+                # 从新版本的commit messages中找到属于这个task的所有commits
+                task_commits = []
+                for msg, msg_task_id in new_commit_task_map.items():
+                    if msg_task_id == task_id:
+                        task_commits.append(msg)
+                new_features_with_commits[task_id] = task_commits
+            
+            # 处理部分新增的tasks（已存在但有新commits）
+            for task_id, commit_messages in partially_new_tasks.items():
+                new_features_with_commits[task_id] = commit_messages
+            
             analysis_time = time.time() - analysis_start
             total_time = time.time() - start_time
             performance_improvement = 262.30 / total_time if total_time > 0 else 0
@@ -229,7 +245,7 @@ class TaskLossDetector:
                 'old_tasks': old_tasks,
                 'new_tasks': new_tasks,
                 'missing_tasks': all_missing_tasks,
-                'new_features': all_new_tasks,
+                'new_features': new_features_with_commits,
                 'common_tasks': common_tasks,
                 'analysis': 'success',
                 'total_time': total_time,
@@ -306,8 +322,21 @@ class TaskLossDetector:
             'new_commit_messages': detailed_analysis.get('new_commit_messages', set())
         }
         
+        # 处理新增的commit messages，优化格式：从 "GALAXY-25259||GALAXY-25259【Bug】thirdparty data router add" 
+        # 优化为 "GALAXY-25259【Bug】thirdparty data router add"
+        new_commit_messages = []
+        for commit_msg in detailed_analysis.get('new_commit_messages', set()):
+            if '||' in commit_msg:
+                # 格式是 "task_id||first_line"，提取第一行
+                first_line = commit_msg.split('||', 1)[1]
+                new_commit_messages.append(first_line)
+            else:
+                # 没有 '||' 分隔符，直接使用原始message
+                new_commit_messages.append(commit_msg)
+        
         return {
-            'new_features': result['new_features'],
+            'new_features': new_commit_messages,  # 返回优化后的commit message列表
+            'new_commit_messages': new_commit_messages,  # 保持兼容性
             'old_tasks': result['old_tasks'],
             'new_tasks': result['new_tasks'],
             'common_tasks': result['common_tasks'],

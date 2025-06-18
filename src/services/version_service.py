@@ -171,7 +171,15 @@ class VersionComparisonService:
                 task_commits = []
                 for commit_message, extracted_task_id in commit_messages_with_tasks.items():
                     if extracted_task_id == task_id:
-                        task_commits.append(commit_message)
+                        # 优化格式：从 "GALAXY-25259||GALAXY-25259【Bug】thirdparty data router add" 
+                        # 优化为 "GALAXY-25259【Bug】thirdparty data router add"
+                        if '||' in commit_message:
+                            # 格式是 "task_id||first_line"，提取第一行
+                            first_line = commit_message.split('||', 1)[1]
+                            task_commits.append(first_line)
+                        else:
+                            # 没有 '||' 分隔符，直接使用原始message
+                            task_commits.append(commit_message)
                 
                 if task_commits:
                     found_tasks[task_id] = {

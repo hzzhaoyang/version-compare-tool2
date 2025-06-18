@@ -98,7 +98,7 @@ class MissingTasksResponse(BaseModel):
 
 
 class NewFeaturesResponse(BaseModel):
-    new_features: List[str]
+    new_features: List[str]  # 直接返回commit message文本列表
     analysis: str
     total_time: float
     error: Optional[str]
@@ -207,7 +207,7 @@ async def analyze_new_features(request: VersionRequest):
             )
         
         response = NewFeaturesResponse(
-            new_features=sorted(list(result.get('new_features', set()))),
+            new_features=result.get('new_features', []),  # 直接使用new_features列表
             analysis=result.get('analysis', 'success'),
             total_time=result.get('total_time', 0),
             error=None,
