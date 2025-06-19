@@ -42,7 +42,7 @@ class GitLabManager:
         
         # 性能配置
         self.config = {
-            'per_page': 500,        # 每页commits数量，降低到100避免超时
+            'per_page': 100,        # 每页commits数量，避免超时
             'max_workers': 8,       # 并发工作线程数，降低避免过载
             'timeout': 30,          # 请求超时时间
             'retry_attempts': 3,    # 重试次数
