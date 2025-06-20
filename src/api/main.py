@@ -161,7 +161,7 @@ async def startup_event():
         raise
 
 
-@app.get("/")
+@app.get("/version-compare")
 async def serve_frontend():
     """根路径 - 返回前端网页"""
     import os
