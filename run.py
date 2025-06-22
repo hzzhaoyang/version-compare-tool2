@@ -13,7 +13,7 @@ if __name__ == '__main__':
     try:
         print("🚀 正在启动版本比较工具 (FastAPI版)...")
         
-        port = int(os.getenv('PORT', 8000))
+        port = int(os.getenv('PORT', 9112))
         debug = os.getenv('DEBUG', 'False').lower() == 'true'
         
         print(f"📡 服务将在端口 {port} 启动")
