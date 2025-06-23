@@ -678,8 +678,8 @@
             // 显示统计信息
             statsDiv.innerHTML = `
                 ${createStatCard(data.new_features.length, '新增功能')}
-                ${createStatCard(data.old_commits_count, '旧版本提交')}
-                ${createStatCard(data.new_commits_count, '新版本提交')}
+                ${createStatCard(data.old_tasks_count, '旧版本任务')}
+                ${createStatCard(data.new_tasks_count, '新版本任务')}
                 ${createStatCard(formatTime(data.total_time), '总耗时')}
             `;
             
@@ -780,8 +780,8 @@
             // 显示统计信息
             statsDiv.innerHTML = `
                 ${createStatCard(data.missing_tasks.length, '缺失任务')}
-                ${createStatCard(data.old_commits_count, '旧版本提交')}
-                ${createStatCard(data.new_commits_count, '新版本提交')}
+                ${createStatCard(data.old_tasks_count, '旧版本任务')}
+                ${createStatCard(data.new_tasks_count, '新版本任务')}
                 ${createStatCard(formatTime(data.total_time), '总耗时')}
             `;
             
