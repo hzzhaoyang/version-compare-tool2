@@ -2,9 +2,19 @@ version: '3.8'
 
 services:
   version-compare-api:
-    build: .
+    # build: .
+    image: version-compare-tool:1.1.0
+    ulimits:
+      nproc: 8192
+      nofile: 65536
+    command: >
+      uvicorn src.api.main:app
+      --host 0.0.0.0
+      --port 9112
+      --log-level info
     ports:
       - "9112:9112"
+    privileged: true
     environment:
       - GITLAB_URL=${GITLAB_URL}
       - GITLAB_TOKEN=${GITLAB_TOKEN}
@@ -27,6 +37,8 @@ services:
       start_period: 40s
     volumes:
       - ./logs:/app/logs
+      #- ./main_fixed.py:/app/src/api/main.py
+      #- ./index.html:/app/index.html
     networks:
       - version-compare-network
 
@@ -35,4 +47,4 @@ networks:
     driver: bridge
 
 volumes:
-  logs: 
+  logs:
