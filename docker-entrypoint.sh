@@ -20,12 +20,15 @@ export DEBUG=${DEBUG:-false}
 export LOG_LEVEL=${LOG_LEVEL:-INFO}
 export ENVIRONMENT=${ENVIRONMENT:-production}
 
-echo "📡 服务端口: $PORT"
+echo "📡 服务端口: $PORT (Web API + MCP 集成)"
 echo "🔧 调试模式: $DEBUG"
 echo "📊 日志级别: $LOG_LEVEL"
 echo "🌍 运行环境: $ENVIRONMENT"
+echo "🔗 MCP SSE 端点: http://localhost:$PORT/api/mcp/sse"
+echo "🔗 MCP 健康检查: http://localhost:$PORT/api/mcp/health"
 
-# 启动服务
+echo "🚀 启动集成 MCP 的 Web API 服务..."
+# 启动集成了MCP的Web API服务
 exec uvicorn src.api.main:app \
     --host 0.0.0.0 \
     --port $PORT \

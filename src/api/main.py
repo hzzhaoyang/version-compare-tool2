@@ -9,12 +9,21 @@ import sys
 import time
 import logging
 from typing import Dict, Any, List, Optional
-from fastapi import FastAPI, HTTPException, Query, Path
+from fastapi import FastAPI, HTTPException, Query, Path, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
+import json
+import asyncio
+
+# MCP 相关导入
+from mcp.server.models import InitializationOptions
+from mcp.server import NotificationOptions, Server
+from mcp.server.sse import SseServerTransport
+from mcp import types
+from starlette.responses import JSONResponse
 
 # 添加项目根目录到Python路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -53,6 +62,156 @@ app.mount("/static", StaticFiles(directory="."), name="static")
 
 # 全局服务实例缓存
 version_services: Dict[str, VersionComparisonService] = {}
+
+# 创建MCP服务器实例
+mcp_server = Server("version-compare-tool")
+sse_transport = SseServerTransport("/api/mcp/messages/")
+
+
+@mcp_server.list_tools()
+async def handle_list_tools() -> List[types.Tool]:
+    """列出可用的工具"""
+    return [
+        types.Tool(
+            name="list-supported-projects",
+            description="列出所有支持的GitLab项目配置",
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        ),
+        types.Tool(
+            name="analyze-new-features",
+            description="分析两个版本之间的新增功能和特性",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "old_version": {
+                        "type": "string",
+                        "description": "旧版本号"
+                    },
+                    "new_version": {
+                        "type": "string", 
+                        "description": "新版本号"
+                    },
+                    "project": {
+                        "type": "string",
+                        "description": "项目key (可选，不指定则使用默认项目)",
+                        "default": ""
+                    }
+                },
+                "required": ["old_version", "new_version"]
+            }
+        ),
+        types.Tool(
+            name="detect-missing-tasks",
+            description="检测两个版本之间缺失的任务和功能",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "old_version": {
+                        "type": "string",
+                        "description": "旧版本号"
+                    },
+                    "new_version": {
+                        "type": "string",
+                        "description": "新版本号"
+                    },
+                    "project": {
+                        "type": "string",
+                        "description": "项目key (可选，不指定则使用默认项目)",
+                        "default": ""
+                    }
+                },
+                "required": ["old_version", "new_version"]
+            }
+        )
+    ]
+
+
+@mcp_server.call_tool()
+async def handle_call_tool(
+    name: str, arguments: Dict[str, Any]
+) -> List[types.TextContent]:
+    """处理工具调用"""
+    
+    try:
+        if name == "list-supported-projects":
+            # 获取支持的项目列表
+            service = get_version_service()
+            projects = service.get_available_projects()
+            current_project = service.current_project
+            
+            # 格式化项目信息
+            project_info = {
+                "current_project": {
+                    "key": current_project.project_key,
+                    "name": current_project.name,
+                    "project_id": current_project.project_id
+                },
+                "all_projects": projects
+            }
+            
+            formatted_result = json.dumps(project_info, indent=2, ensure_ascii=False)
+            
+            return [types.TextContent(
+                type="text",
+                text=f"支持的GitLab项目配置:\n\n{formatted_result}"
+            )]
+        
+        # 处理需要版本参数的工具
+        old_version = arguments.get("old_version")
+        new_version = arguments.get("new_version")
+        project_key = arguments.get("project", "")
+        
+        if not old_version or not new_version:
+            return [types.TextContent(
+                type="text",
+                text="错误: 缺少必需的参数 old_version 或 new_version"
+            )]
+        
+        # 获取版本服务实例
+        service = get_version_service(project_key if project_key else None)
+        
+        if name == "analyze-new-features":
+            # 调用新增功能分析
+            result = service.analyze_new_features(old_version, new_version)
+            
+            # 格式化结果为JSON字符串
+            formatted_result = json.dumps(result, indent=2, ensure_ascii=False)
+            
+            project_info = f"项目: {service.current_project.name}"
+            return [types.TextContent(
+                type="text",
+                text=f"{project_info}\n版本 {old_version} -> {new_version} 新增功能分析结果:\n\n{formatted_result}"
+            )]
+            
+        elif name == "detect-missing-tasks":
+            # 调用缺失任务检测
+            result = service.detect_missing_tasks(old_version, new_version)
+            
+            # 格式化结果为JSON字符串
+            formatted_result = json.dumps(result, indent=2, ensure_ascii=False)
+            
+            project_info = f"项目: {service.current_project.name}"
+            return [types.TextContent(
+                type="text",
+                text=f"{project_info}\n版本 {old_version} -> {new_version} 缺失任务检测结果:\n\n{formatted_result}"
+            )]
+            
+        else:
+            return [types.TextContent(
+                type="text",
+                text=f"未知工具: {name}"
+            )]
+            
+    except Exception as e:
+        logger.error(f"MCP工具调用失败: {e}")
+        return [types.TextContent(
+            type="text",
+            text=f"工具调用失败: {str(e)}"
+        )]
 
 
 def get_version_service(project_key: Optional[str] = None) -> VersionComparisonService:
@@ -194,7 +353,10 @@ async def api_info():
             "POST /analyze-tasks": "分析tasks",
             "POST /search-tasks": "搜索tasks",
             "POST /validate-versions": "验证版本",
-            "GET /statistics/{from_version}/{to_version}": "获取统计信息"
+            "GET /statistics/{from_version}/{to_version}": "获取统计信息",
+            "GET /api/mcp/health": "MCP健康检查",
+            "GET /api/mcp/sse": "MCP SSE连接端点",
+            "POST /api/mcp/messages/": "MCP消息处理端点"
         }
     }
 
@@ -541,6 +703,30 @@ async def validate_versions(request: VersionValidationRequest):
         error_msg = f"验证版本失败: {str(e)}"
         logger.error(f"❌ {error_msg}")
         raise HTTPException(status_code=500, detail=error_msg)
+
+
+@app.get("/api/mcp/health")
+async def mcp_health_check():
+    """MCP健康检查端点"""
+    return JSONResponse({"status": "healthy", "service": "version-compare-mcp-integrated"})
+
+
+@app.get("/api/mcp/sse")
+async def handle_mcp_sse(request: Request):
+    """MCP SSE连接处理函数"""
+    async with sse_transport.connect_sse(
+        request.scope, request.receive, request._send
+    ) as streams:
+        await mcp_server.run(
+            streams[0], streams[1], mcp_server.create_initialization_options()
+        )
+    # 返回一个空响应，因为SSE连接已经在上面处理完毕
+    from starlette.responses import Response
+    return Response()
+
+
+# 挂载MCP消息处理端点
+app.mount("/api/mcp/messages/", sse_transport.handle_post_message)
 
 
 @app.get("/statistics/{from_version}/{to_version}")

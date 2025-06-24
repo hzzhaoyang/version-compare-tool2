@@ -232,7 +232,7 @@ async def main():
     initialize_version_service()
     
     # 获取端口配置
-    port = int(os.getenv("MCP_PORT", "9999"))
+    port = int(os.getenv("MCP_PORT", "3000"))
     
     # 创建SSE传输
     sse_transport = SseServerTransport("/messages/")
