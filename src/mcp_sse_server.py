@@ -128,6 +128,108 @@ async def handle_list_tools() -> List[types.Tool]:
     ]
 
 
+# 添加响应截断处理函数
+def truncate_large_response(result: Dict[str, Any], max_chars: int = 100000) -> Dict[str, Any]:
+    """
+    截断过大的响应数据，避免超出LLM输入长度限制
+    
+    Args:
+        result: 原始响应数据
+        max_chars: 最大字符数限制（默认100,000字符，约25,000 tokens）
+        
+    Returns:
+        截断后的响应数据，包含截断标记
+    """
+    # 先序列化检查长度
+    full_json = json.dumps(result, ensure_ascii=False)
+    
+    if len(full_json) <= max_chars:
+        # 未超出限制，直接返回
+        result['_response_truncated'] = False
+        result['_response_size'] = len(full_json)
+        return result
+    
+    logger.warning(f"⚠️ 响应数据过大 ({len(full_json)} 字符)，开始截断处理...")
+    
+    # 创建截断后的结果
+    truncated_result = result.copy()
+    truncated_result['_response_truncated'] = True
+    truncated_result['_original_size'] = len(full_json)
+    truncated_result['_truncation_info'] = {
+        'reason': 'Response too large for LLM processing',
+        'original_size': len(full_json),
+        'max_allowed': max_chars,
+        'truncated_fields': []
+    }
+    
+    # 处理 new_features 字段截断
+    if 'new_features' in result and isinstance(result['new_features'], list):
+        original_count = len(result['new_features'])
+        if original_count > 50:  # 超过50个就截断
+            truncated_result['new_features'] = result['new_features'][:50]
+            truncated_result['_truncation_info']['truncated_fields'].append({
+                'field': 'new_features',
+                'original_count': original_count,
+                'truncated_count': 50,
+                'message': f'新功能列表已截断：显示前50项，共{original_count}项'
+            })
+    
+    # 处理 detailed_analysis 字段截断
+    if 'detailed_analysis' in result and isinstance(result['detailed_analysis'], dict):
+        detailed = result['detailed_analysis']
+        
+        # 截断 completely_new_tasks
+        if 'completely_new_tasks' in detailed and isinstance(detailed['completely_new_tasks'], list):
+            original_count = len(detailed['completely_new_tasks'])
+            if original_count > 30:
+                truncated_result['detailed_analysis']['completely_new_tasks'] = detailed['completely_new_tasks'][:30]
+                truncated_result['_truncation_info']['truncated_fields'].append({
+                    'field': 'detailed_analysis.completely_new_tasks',
+                    'original_count': original_count,
+                    'truncated_count': 30,
+                    'message': f'完全新增任务列表已截断：显示前30项，共{original_count}项'
+                })
+        
+        # 截断 partially_new_tasks
+        if 'partially_new_tasks' in detailed and isinstance(detailed['partially_new_tasks'], dict):
+            original_count = len(detailed['partially_new_tasks'])
+            if original_count > 20:
+                items = list(detailed['partially_new_tasks'].items())[:20]
+                truncated_result['detailed_analysis']['partially_new_tasks'] = dict(items)
+                truncated_result['_truncation_info']['truncated_fields'].append({
+                    'field': 'detailed_analysis.partially_new_tasks',
+                    'original_count': original_count,
+                    'truncated_count': 20,
+                    'message': f'部分新增任务列表已截断：显示前20项，共{original_count}项'
+                })
+        
+        # 截断每个任务的commit messages
+        if 'partially_new_tasks' in truncated_result['detailed_analysis']:
+            for task_id, commits in truncated_result['detailed_analysis']['partially_new_tasks'].items():
+                if isinstance(commits, list) and len(commits) > 5:
+                    truncated_result['detailed_analysis']['partially_new_tasks'][task_id] = commits[:5]
+    
+    # 处理 missing_tasks 字段截断
+    if 'missing_tasks' in result and isinstance(result['missing_tasks'], list):
+        original_count = len(result['missing_tasks'])
+        if original_count > 30:
+            truncated_result['missing_tasks'] = result['missing_tasks'][:30]
+            truncated_result['_truncation_info']['truncated_fields'].append({
+                'field': 'missing_tasks',
+                'original_count': original_count,
+                'truncated_count': 30,
+                'message': f'缺失任务列表已截断：显示前30项，共{original_count}项'
+            })
+    
+    # 再次检查截断后的大小
+    truncated_json = json.dumps(truncated_result, ensure_ascii=False)
+    truncated_result['_response_size'] = len(truncated_json)
+    
+    logger.info(f"✅ 截断完成：{len(full_json)} -> {len(truncated_json)} 字符 ({len(truncated_result['_truncation_info']['truncated_fields'])} 个字段被截断)")
+    
+    return truncated_result
+
+
 @server.call_tool()
 async def handle_call_tool(
     name: str, arguments: Dict[str, Any]
@@ -185,26 +287,62 @@ async def handle_call_tool(
             # 调用新增功能分析（同步方法）
             result = version_service.analyze_new_features(old_version, new_version)
             
+            # 截断过大的响应
+            truncated_result = truncate_large_response(result)
+            
             # 格式化结果为JSON字符串
-            formatted_result = json.dumps(result, indent=2, ensure_ascii=False)
+            formatted_result = json.dumps(truncated_result, indent=2, ensure_ascii=False)
             
             project_info = f"项目: {version_service.current_project.name}"
+            
+            # 添加截断提示信息
+            truncation_notice = ""
+            if truncated_result.get('_response_truncated', False):
+                truncation_info = truncated_result.get('_truncation_info', {})
+                truncated_fields = truncation_info.get('truncated_fields', [])
+                
+                if truncated_fields:
+                    notices = []
+                    for field_info in truncated_fields:
+                        notices.append(f"• {field_info['message']}")
+                    
+                    truncation_notice = f"\n\n⚠️ **响应数据已截断** (原始大小: {truncation_info['original_size']} 字符):\n" + "\n".join(notices)
+                    truncation_notice += f"\n\n💡 **提示**: 完整数据可通过Web界面查看，或使用更具体的查询条件。"
+            
             return [types.TextContent(
                 type="text",
-                text=f"{project_info}\n版本 {old_version} -> {new_version} 新增功能分析结果:\n\n{formatted_result}"
+                text=f"{project_info}\n版本 {old_version} -> {new_version} 新增功能分析结果:\n\n{formatted_result}{truncation_notice}"
             )]
             
         elif name == "detect-missing-tasks":
             # 调用缺失任务检测（同步方法）
             result = version_service.detect_missing_tasks(old_version, new_version)
             
+            # 截断过大的响应
+            truncated_result = truncate_large_response(result)
+            
             # 格式化结果为JSON字符串
-            formatted_result = json.dumps(result, indent=2, ensure_ascii=False)
+            formatted_result = json.dumps(truncated_result, indent=2, ensure_ascii=False)
             
             project_info = f"项目: {version_service.current_project.name}"
+            
+            # 添加截断提示信息
+            truncation_notice = ""
+            if truncated_result.get('_response_truncated', False):
+                truncation_info = truncated_result.get('_truncation_info', {})
+                truncated_fields = truncation_info.get('truncated_fields', [])
+                
+                if truncated_fields:
+                    notices = []
+                    for field_info in truncated_fields:
+                        notices.append(f"• {field_info['message']}")
+                    
+                    truncation_notice = f"\n\n⚠️ **响应数据已截断** (原始大小: {truncation_info['original_size']} 字符):\n" + "\n".join(notices)
+                    truncation_notice += f"\n\n💡 **提示**: 完整数据可通过Web界面查看，或使用更具体的查询条件。"
+            
             return [types.TextContent(
                 type="text",
-                text=f"{project_info}\n版本 {old_version} -> {new_version} 缺失任务检测结果:\n\n{formatted_result}"
+                text=f"{project_info}\n版本 {old_version} -> {new_version} 缺失任务检测结果:\n\n{formatted_result}{truncation_notice}"
             )]
             
         else:
