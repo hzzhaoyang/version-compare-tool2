@@ -123,13 +123,13 @@ async def handle_list_tools() -> List[types.Tool]:
 
 
 # 添加响应截断处理函数
-def truncate_large_response(result: Dict[str, Any], max_chars: int = 100000) -> Dict[str, Any]:
+def truncate_large_response(result: Dict[str, Any], max_chars: int = 130000) -> Dict[str, Any]:
     """
     截断过大的响应数据，避免超出LLM输入长度限制
     
     Args:
         result: 原始响应数据
-        max_chars: 最大字符数限制（默认100,000字符，约25,000 tokens）
+        max_chars: 最大字符数限制（默认130,000字符，留出安全边界）
         
     Returns:
         截断后的响应数据，包含截断标记
@@ -143,83 +143,169 @@ def truncate_large_response(result: Dict[str, Any], max_chars: int = 100000) -> 
         result['_response_size'] = len(full_json)
         return result
     
-    logger.warning(f"⚠️ 响应数据过大 ({len(full_json)} 字符)，开始截断处理...")
+    logger.warning(f"⚠️ 响应数据过大 ({len(full_json)} 字符)，开始激进截断处理...")
     
-    # 创建截断后的结果
-    truncated_result = result.copy()
-    truncated_result['_response_truncated'] = True
-    truncated_result['_original_size'] = len(full_json)
-    truncated_result['_truncation_info'] = {
-        'reason': 'Response too large for LLM processing',
-        'original_size': len(full_json),
-        'max_allowed': max_chars,
-        'truncated_fields': []
+    # 创建精简的响应结构
+    truncated_result = {
+        '_response_truncated': True,
+        '_original_size': len(full_json),
+        '_truncation_info': {
+            'reason': 'Response too large for LLM processing',
+            'original_size': len(full_json),
+            'max_allowed': max_chars,
+            'truncated_fields': []
+        }
     }
     
-    # 处理 new_features 字段截断
+    # 保留基本信息
+    basic_fields = ['analysis', 'total_time', 'old_commits_count', 'new_commits_count', 
+                   'old_tasks_count', 'new_tasks_count', 'error']
+    for field in basic_fields:
+        if field in result:
+            truncated_result[field] = result[field]
+    
+    # 激进截断 new_features 字段 - 只保留前10个
     if 'new_features' in result and isinstance(result['new_features'], list):
         original_count = len(result['new_features'])
-        if original_count > 50:  # 超过50个就截断
-            truncated_result['new_features'] = result['new_features'][:50]
+        if original_count > 0:
+            # 只保留前10个，并简化内容
+            truncated_features = []
+            for i, feature in enumerate(result['new_features'][:10]):
+                # 截断每个feature的长度到200字符
+                if isinstance(feature, str) and len(feature) > 200:
+                    truncated_features.append(feature[:200] + "...")
+                else:
+                    truncated_features.append(feature)
+            
+            truncated_result['new_features'] = truncated_features
             truncated_result['_truncation_info']['truncated_fields'].append({
                 'field': 'new_features',
                 'original_count': original_count,
-                'truncated_count': 50,
-                'message': f'新功能列表已截断：显示前50项，共{original_count}项'
+                'truncated_count': len(truncated_features),
+                'message': f'新功能列表已截断：显示前{len(truncated_features)}项，共{original_count}项'
             })
     
-    # 处理 detailed_analysis 字段截断
-    if 'detailed_analysis' in result and isinstance(result['detailed_analysis'], dict):
-        detailed = result['detailed_analysis']
-        
-        # 截断 completely_new_tasks
-        if 'completely_new_tasks' in detailed and isinstance(detailed['completely_new_tasks'], list):
-            original_count = len(detailed['completely_new_tasks'])
-            if original_count > 30:
-                truncated_result['detailed_analysis']['completely_new_tasks'] = detailed['completely_new_tasks'][:30]
-                truncated_result['_truncation_info']['truncated_fields'].append({
-                    'field': 'detailed_analysis.completely_new_tasks',
-                    'original_count': original_count,
-                    'truncated_count': 30,
-                    'message': f'完全新增任务列表已截断：显示前30项，共{original_count}项'
-                })
-        
-        # 截断 partially_new_tasks
-        if 'partially_new_tasks' in detailed and isinstance(detailed['partially_new_tasks'], dict):
-            original_count = len(detailed['partially_new_tasks'])
-            if original_count > 20:
-                items = list(detailed['partially_new_tasks'].items())[:20]
-                truncated_result['detailed_analysis']['partially_new_tasks'] = dict(items)
-                truncated_result['_truncation_info']['truncated_fields'].append({
-                    'field': 'detailed_analysis.partially_new_tasks',
-                    'original_count': original_count,
-                    'truncated_count': 20,
-                    'message': f'部分新增任务列表已截断：显示前20项，共{original_count}项'
-                })
-        
-        # 截断每个任务的commit messages
-        if 'partially_new_tasks' in truncated_result['detailed_analysis']:
-            for task_id, commits in truncated_result['detailed_analysis']['partially_new_tasks'].items():
-                if isinstance(commits, list) and len(commits) > 5:
-                    truncated_result['detailed_analysis']['partially_new_tasks'][task_id] = commits[:5]
-    
-    # 处理 missing_tasks 字段截断
+    # 激进截断 missing_tasks 字段 - 只保留前10个
     if 'missing_tasks' in result and isinstance(result['missing_tasks'], list):
         original_count = len(result['missing_tasks'])
-        if original_count > 30:
-            truncated_result['missing_tasks'] = result['missing_tasks'][:30]
+        if original_count > 0:
+            truncated_result['missing_tasks'] = result['missing_tasks'][:10]
             truncated_result['_truncation_info']['truncated_fields'].append({
                 'field': 'missing_tasks',
                 'original_count': original_count,
-                'truncated_count': 30,
-                'message': f'缺失任务列表已截断：显示前30项，共{original_count}项'
+                'truncated_count': min(10, original_count),
+                'message': f'缺失任务列表已截断：显示前{min(10, original_count)}项，共{original_count}项'
             })
     
-    # 再次检查截断后的大小
-    truncated_json = json.dumps(truncated_result, ensure_ascii=False)
-    truncated_result['_response_size'] = len(truncated_json)
+    # 极简化 detailed_analysis 字段
+    if 'detailed_analysis' in result and isinstance(result['detailed_analysis'], dict):
+        detailed = result['detailed_analysis']
+        simple_analysis = {}
+        
+        # 只保留任务数量统计，不保留具体列表
+        if 'completely_new_tasks' in detailed:
+            simple_analysis['completely_new_tasks_count'] = len(detailed.get('completely_new_tasks', []))
+            if simple_analysis['completely_new_tasks_count'] > 0:
+                # 只保留前5个任务ID
+                simple_analysis['completely_new_tasks_sample'] = list(detailed.get('completely_new_tasks', []))[:5]
+        
+        if 'partially_new_tasks' in detailed:
+            simple_analysis['partially_new_tasks_count'] = len(detailed.get('partially_new_tasks', {}))
+            if simple_analysis['partially_new_tasks_count'] > 0:
+                # 只保留前3个任务的简化信息
+                sample_tasks = {}
+                for i, (task_id, commits) in enumerate(detailed.get('partially_new_tasks', {}).items()):
+                    if i >= 3:
+                        break
+                    # 只保留任务ID和commit数量
+                    sample_tasks[task_id] = f"{len(commits)} commits"
+                simple_analysis['partially_new_tasks_sample'] = sample_tasks
+        
+        if 'completely_missing_tasks' in detailed:
+            simple_analysis['completely_missing_tasks_count'] = len(detailed.get('completely_missing_tasks', []))
+            if simple_analysis['completely_missing_tasks_count'] > 0:
+                simple_analysis['completely_missing_tasks_sample'] = list(detailed.get('completely_missing_tasks', []))[:5]
+        
+        if 'partially_missing_tasks' in detailed:
+            simple_analysis['partially_missing_tasks_count'] = len(detailed.get('partially_missing_tasks', {}))
+            if simple_analysis['partially_missing_tasks_count'] > 0:
+                sample_tasks = {}
+                for i, (task_id, commits) in enumerate(detailed.get('partially_missing_tasks', {}).items()):
+                    if i >= 3:
+                        break
+                    sample_tasks[task_id] = f"{len(commits)} commits"
+                simple_analysis['partially_missing_tasks_sample'] = sample_tasks
+        
+        if 'new_commit_count' in detailed:
+            simple_analysis['new_commit_count'] = detailed['new_commit_count']
+        if 'missing_commit_count' in detailed:
+            simple_analysis['missing_commit_count'] = detailed['missing_commit_count']
+        
+        truncated_result['detailed_analysis'] = simple_analysis
+        truncated_result['_truncation_info']['truncated_fields'].append({
+            'field': 'detailed_analysis',
+            'message': '详细分析已简化：只保留统计数据和少量样本'
+        })
     
-    logger.info(f"✅ 截断完成：{len(full_json)} -> {len(truncated_json)} 字符 ({len(truncated_result['_truncation_info']['truncated_fields'])} 个字段被截断)")
+    # 简化 service_stats - 只保留关键性能指标
+    if 'service_stats' in result:
+        stats = result.get('service_stats', {})
+        truncated_result['service_stats'] = {
+            'total_time': stats.get('total_time', 0),
+            'commits_processed': stats.get('commits_processed', 0),
+            'performance_improvement': stats.get('performance_improvement', 'N/A')
+        }
+    
+    # 检查截断后的大小，如果还是太大，进一步缩减
+    truncated_json = json.dumps(truncated_result, ensure_ascii=False)
+    if len(truncated_json) > max_chars:
+        logger.warning(f"⚠️ 第一次截断后仍然过大 ({len(truncated_json)} 字符)，进行二次截断...")
+        
+        # 进一步缩减 new_features 到前5个
+        if 'new_features' in truncated_result:
+            original_count = len(truncated_result['new_features'])
+            truncated_result['new_features'] = truncated_result['new_features'][:5]
+            # 更新截断信息
+            for field_info in truncated_result['_truncation_info']['truncated_fields']:
+                if field_info['field'] == 'new_features':
+                    field_info['truncated_count'] = min(5, original_count)
+                    field_info['message'] = f'新功能列表已截断：显示前{min(5, original_count)}项，共{field_info["original_count"]}项'
+        
+        # 进一步缩减 missing_tasks 到前5个
+        if 'missing_tasks' in truncated_result:
+            original_count = len(truncated_result['missing_tasks'])
+            truncated_result['missing_tasks'] = truncated_result['missing_tasks'][:5]
+            # 更新截断信息
+            for field_info in truncated_result['_truncation_info']['truncated_fields']:
+                if field_info['field'] == 'missing_tasks':
+                    field_info['truncated_count'] = min(5, original_count)
+                    field_info['message'] = f'缺失任务列表已截断：显示前{min(5, original_count)}项，共{field_info["original_count"]}项'
+        
+        # 进一步简化 detailed_analysis
+        if 'detailed_analysis' in truncated_result:
+            analysis = truncated_result['detailed_analysis']
+            # 只保留计数，移除样本
+            simplified_analysis = {}
+            for key, value in analysis.items():
+                if key.endswith('_count'):
+                    simplified_analysis[key] = value
+            truncated_result['detailed_analysis'] = simplified_analysis
+        
+        # 移除非关键字段
+        non_essential_fields = ['service_stats']
+        for field in non_essential_fields:
+            if field in truncated_result:
+                del truncated_result[field]
+                truncated_result['_truncation_info']['truncated_fields'].append({
+                    'field': field,
+                    'message': f'{field} 字段已移除以减少响应大小'
+                })
+    
+    # 最终检查
+    final_json = json.dumps(truncated_result, ensure_ascii=False)
+    truncated_result['_response_size'] = len(final_json)
+    
+    logger.info(f"✅ 激进截断完成：{len(full_json)} -> {len(final_json)} 字符 ({len(truncated_result['_truncation_info']['truncated_fields'])} 个字段被处理)")
     
     return truncated_result
 
