@@ -9,9 +9,11 @@
 - **detect-missing-tasks**: 检测两个版本之间缺失的任务和功能
 - **list-supported-projects**: 列出所有支持的GitLab项目配置（无需参数）
 
-### 支持的运行模式
-1. **标准IO模式**: 通过stdin/stdout进行通信
-2. **SSE模式**: 通过HTTP和Server-Sent Events进行通信
+### 统一架构设计
+- **集成式服务**: MCP功能已集成到Web API服务器中
+- **SSE通信**: 通过HTTP和Server-Sent Events进行通信
+- **多项目支持**: 从JSON配置文件动态加载项目配置
+- **Web界面**: 提供完整的Web界面进行版本比较操作
 
 ## 📦 安装依赖
 
@@ -21,46 +23,54 @@ pip install -r requirements.txt
 
 ## ⚙️ 配置环境变量
 
-创建 `.env` 文件或设置环境变量：
+项目配置从 `config/projects.json` 文件读取，支持多项目配置。创建 `.env` 文件或设置环境变量：
 
 ```bash
+# GitLab基础配置
 export GITLAB_URL="https://gitlab.example.com"
-export GITLAB_TOKEN="your_gitlab_token_here"
-export GITLAB_PROJECT_ID="your_project_id_here"
 
-# 可选：SSE服务器端口（默认3000）
-export MCP_PORT="3000"
+# 项目配置（示例：复杂报表专业版）
+export GITLAB_TOKEN_COMPLEX_REPORT_PRO="your_gitlab_token_here"
+export GITLAB_PROJECT_ID_COMPLEX_REPORT_PRO="415"
+
+# 其他项目配置（可选）
+export GITLAB_TOKEN_BI_SERVER="your_token"
+export GITLAB_PROJECT_ID_BI_SERVER="130"
+
+export GITLAB_TOKEN_DATA_MIND="your_token"
+export GITLAB_PROJECT_ID_DATA_MIND="385"
+# ... 更多项目配置
 ```
 
 ## 🔧 使用方法
 
-### 1. 标准IO MCP服务器
+### 1. 启动集成服务
 
-直接运行MCP服务器：
-
-```bash
-python3 src/mcp_server.py
-```
-
-### 2. SSE MCP服务器
-
-启动支持HTTP的MCP服务器：
+启动包含Web界面和MCP功能的统一服务：
 
 ```bash
-python3 src/mcp_sse_server.py
+python3 run.py
 ```
 
-服务器将在 `http://localhost:3000` 启动，提供以下端点：
-- `/health`: 健康检查
-- `/messages`: MCP消息处理端点（POST）
-- `/sse`: SSE连接端点（GET）
+或使用uvicorn直接启动：
 
-### 3. 客户端测试
+```bash
+uvicorn src.api.main:app --host 0.0.0.0 --port 9112
+```
+
+服务器将在 `http://localhost:9112` 启动，提供以下端点：
+- `/`: 前端Web界面
+- `/api/mcp/health`: MCP健康检查
+- `/api/mcp/sse`: MCP SSE连接端点
+- `/api/mcp/messages/`: MCP消息处理端点
+- `/docs`: API文档
+
+### 2. 客户端测试
 
 运行测试脚本验证功能：
 
 ```bash
-python3 test_mcp_client.py
+python3 test_integrated_mcp.py
 ```
 
 ## 🤖 AI助手集成
@@ -73,17 +83,19 @@ python3 test_mcp_client.py
 {
   "mcpServers": {
     "version-compare-tool": {
-      "command": "python3",
-      "args": ["path/to/src/mcp_server.py"],
+      "command": "uvicorn",
+      "args": ["src.api.main:app", "--host", "0.0.0.0", "--port", "9112"],
       "env": {
         "GITLAB_URL": "https://gitlab.example.com",
-        "GITLAB_TOKEN": "your_token_here",
-        "GITLAB_PROJECT_ID": "your_project_id_here"
+        "GITLAB_TOKEN_COMPLEX_REPORT_PRO": "your_token_here",
+        "GITLAB_PROJECT_ID_COMPLEX_REPORT_PRO": "415"
       }
     }
   }
 }
 ```
+
+💡 **提示**: 配置完成后，Claude Desktop将通过SSE连接到 `http://localhost:9112/api/mcp/sse` 端点使用MCP工具。
 
 ### 其他AI助手
 
@@ -157,21 +169,32 @@ AI助手将自动调用 `list-supported-projects` 工具并返回当前配置的
 ### 文件结构
 ```
 src/
-├── mcp_server.py          # 标准IO MCP服务器
-├── mcp_sse_server.py      # SSE MCP服务器
+├── api/
+│   └── main.py           # 集成的Web API + MCP服务器
 └── services/
     └── version_service.py # 版本比较服务
 
-mcp_config.json           # MCP配置文件
-test_mcp_client.py       # 客户端测试脚本
+config/
+└── projects.json         # 项目配置文件
+
+mcp_config.json          # MCP配置文件
+test_integrated_mcp.py   # 集成测试脚本
 ```
 
 ### 扩展功能
 
 要添加新的MCP工具：
 
-1. 在 `@server.list_tools()` 中添加工具定义
-2. 在 `@server.call_tool()` 中添加工具处理逻辑
+1. 在 `src/api/main.py` 的 `@mcp_server.list_tools()` 中添加工具定义
+2. 在 `@mcp_server.call_tool()` 中添加工具处理逻辑
+3. 要添加新项目支持，在 `config/projects.json` 中添加项目配置
+
+### 架构优势
+
+- **统一服务**: Web界面、API和MCP功能在同一服务中
+- **配置管理**: 项目配置外部化到JSON文件
+- **零兼容代码**: 彻底移除向后兼容逻辑，代码简洁清晰
+- **多项目支持**: 动态加载和切换项目配置
 3. 添加相应的格式化函数
 
 ## 🔗 相关链接

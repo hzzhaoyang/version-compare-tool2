@@ -1,128 +1,63 @@
 #!/usr/bin/env python3
 """
-MCP客户端测试脚本
-用于测试版本比较工具的MCP服务器
+版本比较工具MCP测试脚本 (已废弃)
+⚠️ 注意：独立的MCP服务器已集成到Web API中，请使用 test_integrated_mcp.py 进行测试
 """
 
 import asyncio
 import os
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
 
 
-async def test_mcp_tools():
-    """测试MCP工具"""
-    # 配置服务器参数
-    server_params = StdioServerParameters(
-        command="python3",
-        args=["src/mcp_server.py"],
-        env={
-            "GITLAB_URL": os.getenv("GITLAB_URL", "https://gitlab.example.com"),
-            "GITLAB_TOKEN": os.getenv("GITLAB_TOKEN", ""),
-            "GITLAB_PROJECT_ID": os.getenv("GITLAB_PROJECT_ID", "")
-        }
-    )
-    
-    print("🚀 连接到MCP服务器...")
-    
-    async with stdio_client(server_params) as (read, write):
-        async with ClientSession(read, write) as session:
-            # 初始化连接
-            print("🔗 初始化连接...")
-            await session.initialize()
-            
-            # 列出可用工具
-            print("📋 列出可用工具...")
-            tools = await session.list_tools()
-            print(f"发现 {len(tools.tools)} 个工具:")
-            for tool in tools.tools:
-                print(f"  - {tool.name}: {tool.description}")
-            
-            # 测试列出支持的项目
-            print("\n🏢 测试列出支持的项目...")
-            try:
-                result = await session.call_tool(
-                    "list-supported-projects",
-                    arguments={}
-                )
-                print("✅ 项目列表获取结果:")
-                for content in result.content:
-                    if hasattr(content, 'text'):
-                        print(content.text)
-                    else:
-                        print(content)
-            except Exception as e:
-                print(f"❌ 项目列表获取失败: {e}")
-            
-            # 测试分析新增功能
-            print("\n🆕 测试分析新增功能...")
-            try:
-                result = await session.call_tool(
-                    "analyze-new-features",
-                    arguments={
-                        "old_version": "6.6.0-ZSJJ-5",
-                        "new_version": "7.1.0-hf37"
-                    }
-                )
-                print("✅ 新增功能分析结果:")
-                for content in result.content:
-                    if hasattr(content, 'text'):
-                        print(content.text)
-                    else:
-                        print(content)
-                        
-            except Exception as e:
-                print(f"❌ 新增功能分析失败: {e}")
-            
-            # 测试检测缺失任务
-            print("\n🔍 测试检测缺失任务...")
-            try:
-                result = await session.call_tool(
-                    "detect-missing-tasks",
-                    arguments={
-                        "old_version": "6.6.0-ZSJJ-5",
-                        "new_version": "7.1.0-hf37"
-                    }
-                )
-                print("✅ 缺失任务检测结果:")
-                for content in result.content:
-                    if hasattr(content, 'text'):
-                        print(content.text)
-                    else:
-                        print(content)
-                        
-            except Exception as e:
-                print(f"❌ 缺失任务检测失败: {e}")
+async def test_legacy_mcp():
+    """提示用户使用新的测试方式"""
+    print("⚠️ 独立MCP服务器已废弃")
+    print("🔄 MCP功能已集成到统一的Web API服务中")
+    print("")
+    print("📌 新的测试方式:")
+    print("   1. 启动服务: python3 run.py")
+    print("   2. 运行测试: python3 test_integrated_mcp.py")
+    print("")
+    print("🌐 或直接访问Web界面: http://localhost:9112/version-compare")
+    print("📖 API文档: http://localhost:9112/docs")
+    print("🔗 MCP健康检查: http://localhost:9112/api/mcp/health")
 
 
-async def test_mcp_sse():
-    """测试MCP SSE服务器"""
+async def test_integrated_mcp():
+    """测试集成的MCP服务器"""
     import httpx
     
-    print("🌐 测试MCP SSE服务器...")
+    print("🌐 测试集成的MCP服务器...")
     
     # 测试健康检查
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get("http://localhost:3000/health")
+            response = await client.get("http://localhost:9112/api/mcp/health")
             if response.status_code == 200:
-                print("✅ SSE服务器健康检查通过")
+                print("✅ 集成MCP服务器健康检查通过")
                 print(f"响应: {response.json()}")
+                
+                # 测试Web API
+                print("\n🌐 测试Web API...")
+                api_response = await client.get("http://localhost:9112/health")
+                if api_response.status_code == 200:
+                    print("✅ Web API健康检查通过")
+                    print(f"响应: {api_response.json()}")
+                
             else:
-                print(f"❌ SSE服务器健康检查失败: {response.status_code}")
+                print(f"❌ 集成MCP服务器健康检查失败: {response.status_code}")
     except Exception as e:
-        print(f"❌ 无法连接到SSE服务器: {e}")
-        print("请先启动SSE服务器: python3 src/mcp_sse_server.py")
+        print(f"❌ 无法连接到集成服务器: {e}")
+        print("请先启动服务: python3 run.py")
 
 
 if __name__ == "__main__":
-    print("🧪 版本比较工具MCP客户端测试")
+    print("🧪 版本比较工具MCP测试 (已更新)")
     print("=" * 50)
     
-    # 测试标准IO MCP服务器
-    print("\n📡 测试标准IO MCP服务器")
-    asyncio.run(test_mcp_tools())
+    # 显示架构变更信息
+    print("\n📢 架构更新说明")
+    asyncio.run(test_legacy_mcp())
     
-    # 测试SSE MCP服务器
-    print("\n🌐 测试SSE MCP服务器")
-    asyncio.run(test_mcp_sse()) 
+    # 测试集成的MCP服务器
+    print("\n🔍 测试集成服务器")
+    asyncio.run(test_integrated_mcp()) 

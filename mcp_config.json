@@ -1,23 +1,20 @@
 {
   "mcpServers": {
     "version-compare-tool": {
-      "command": "python3",
-      "args": ["src/mcp_server.py"],
+      "command": "uvicorn",
+      "args": ["src.api.main:app", "--host", "0.0.0.0", "--port", "9112"],
       "env": {
         "GITLAB_URL": "https://gitlab.example.com",
-        "GITLAB_TOKEN": "your_token_here",
-        "GITLAB_PROJECT_ID": "your_project_id_here"
-      }
-    },
-    "version-compare-tool-sse": {
-      "command": "python3",
-      "args": ["src/mcp_sse_server.py"],
-      "env": {
-        "GITLAB_URL": "https://gitlab.example.com",
-        "GITLAB_TOKEN": "your_token_here", 
-        "GITLAB_PROJECT_ID": "your_project_id_here",
-        "MCP_PORT": "3000"
+        "GITLAB_TOKEN_COMPLEX_REPORT_PRO": "your_token_here",
+        "GITLAB_PROJECT_ID_COMPLEX_REPORT_PRO": "415"
       }
     }
+  },
+  "description": "版本比较工具统一MCP服务配置，通过集成的Web API + MCP服务器提供功能",
+  "endpoints": {
+    "web_ui": "http://localhost:9112/version-compare",
+    "mcp_health": "http://localhost:9112/api/mcp/health",
+    "mcp_sse": "http://localhost:9112/api/mcp/sse",
+    "api_docs": "http://localhost:9112/docs"
   }
 } 

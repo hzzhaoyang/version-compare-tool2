@@ -486,7 +486,9 @@
             availableProjects.forEach(project => {
                 const option = document.createElement('option');
                 option.value = project.key;
-                option.textContent = `${project.name} (ID: ${project.project_id})`;
+                const displayName = project.name_zh;
+                const englishName = project.name_en ? ` (${project.name_en})` : '';
+                option.textContent = `${displayName}${englishName} [ID: ${project.project_id}]`;
                 option.selected = project.key === currentProject;
                 selector.appendChild(option);
             });
@@ -516,7 +518,11 @@
         // 获取项目名称
         function getProjectName(projectKey) {
             const project = availableProjects.find(p => p.key === projectKey);
-            return project ? project.name : projectKey;
+            if (!project) return projectKey;
+            
+            const displayName = project.name_zh;
+            const englishName = project.name_en ? ` (${project.name_en})` : '';
+            return `${displayName}${englishName}`;
         }
 
         // 获取当前选中的项目
@@ -562,9 +568,11 @@
         function createProjectInfo(projectInfo) {
             if (!projectInfo) return '';
             
+            const nameDisplay = `${projectInfo.name_zh} (${projectInfo.name_en})`;
+            
             return `
                 <h4>📋 项目信息</h4>
-                <p><strong>项目名称:</strong> ${projectInfo.name}</p>
+                <p><strong>项目名称:</strong> ${nameDisplay}</p>
                 <p><strong>项目标识:</strong> ${projectInfo.key}</p>
                 <p><strong>项目ID:</strong> ${projectInfo.project_id}</p>
             `;

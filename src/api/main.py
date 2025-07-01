@@ -326,19 +326,28 @@ async def handle_call_tool(
     
     try:
         if name == "list-supported-projects":
-            # 获取支持的项目列表
-            service = get_version_service()
-            projects = service.get_available_projects()
-            current_project = service.current_project
+            # 使用项目配置管理器获取支持的项目列表
+            from src.services.version_service import ProjectConfigManager
+            config_manager = ProjectConfigManager()
+            projects = config_manager.get_all_projects()
+            current_project_key = config_manager.get_current_project_key()
+            
+            # 找到当前项目信息
+            current_project_info = next(
+                (p for p in projects if p['key'] == current_project_key), 
+                projects[0] if projects else None
+            )
             
             # 格式化项目信息
             project_info = {
                 "current_project": {
-                    "key": current_project.project_key,
-                    "name": current_project.name,
-                    "project_id": current_project.project_id
-                },
-                "all_projects": projects
+                    "key": current_project_info['key'],
+                    "name_zh": current_project_info['name_zh'],
+                    "name_en": current_project_info['name_en'],
+                    "project_id": current_project_info['project_id']
+                } if current_project_info else None,
+                "all_projects": projects,
+                "total_projects": len(projects)
             }
             
             formatted_result = json.dumps(project_info, indent=2, ensure_ascii=False)
@@ -372,7 +381,7 @@ async def handle_call_tool(
             # 格式化结果为JSON字符串
             formatted_result = json.dumps(truncated_result, indent=2, ensure_ascii=False)
             
-            project_info = f"项目: {service.current_project.name}"
+            project_info = f"项目: {service.current_project.name_zh} ({service.current_project.name_en})"
             
             # 添加截断提示信息
             truncation_notice = ""
@@ -403,7 +412,7 @@ async def handle_call_tool(
             # 格式化结果为JSON字符串
             formatted_result = json.dumps(truncated_result, indent=2, ensure_ascii=False)
             
-            project_info = f"项目: {service.current_project.name}"
+            project_info = f"项目: {service.current_project.name_zh} ({service.current_project.name_en})"
             
             # 添加截断提示信息
             truncation_notice = ""
@@ -436,6 +445,16 @@ async def handle_call_tool(
             type="text",
             text=f"工具调用失败: {str(e)}"
         )]
+
+
+def create_project_info(project_config) -> Dict[str, str]:
+    """创建项目信息字典，包含中英文名称"""
+    return {
+        'key': project_config.project_key,
+        'name_zh': project_config.name_zh,
+        'name_en': project_config.name_en,
+        'project_id': project_config.project_id
+    }
 
 
 def get_version_service(project_key: Optional[str] = None) -> VersionComparisonService:
@@ -596,17 +615,19 @@ async def get_frontend_config():
 async def get_available_projects():
     """获取可用的项目列表"""
     try:
-        # 获取默认服务实例以获取项目列表
-        service = get_version_service()
-        projects = service.get_available_projects()
+        # 使用项目配置管理器获取所有项目（包括未配置的项目）
+        from src.services.version_service import ProjectConfigManager
+        config_manager = ProjectConfigManager()
+        projects = config_manager.get_all_projects()
+        current_project_key = config_manager.get_current_project_key()
         
         # 添加当前选中的项目标识
         for project in projects:
-            project['is_current'] = project['key'] == service.current_project.project_key
+            project['is_current'] = project['key'] == current_project_key
         
         return {
             "projects": projects,
-            "current_project": service.current_project.project_key
+            "current_project": current_project_key
         }
     except Exception as e:
         logger.error(f"❌ 获取项目列表失败: {e}")
@@ -622,7 +643,7 @@ async def health_check():
             "status": "healthy",
             "service_version": "2.1.0",
             "timestamp": time.time(),
-            "current_project": service.current_project.name,
+            "current_project": f"{service.current_project.name_zh} ({service.current_project.name_en})",
             "available_projects": len(service.get_available_projects())
         }
     except Exception as e:
@@ -660,11 +681,7 @@ async def analyze_new_features(request: VersionRequest):
                     'endpoint': '/analyze-new-features',
                     'error': result.get('error', 'Unknown error')
                 },
-                project_info={
-                    'key': service.current_project.project_key,
-                    'name': service.current_project.name,
-                    'project_id': service.current_project.project_id
-                }
+                project_info=create_project_info(service.current_project)
             )
         
         # 构建详细分析结果
@@ -692,11 +709,7 @@ async def analyze_new_features(request: VersionRequest):
                 'api_time': api_time,
                 'endpoint': '/analyze-new-features'
             },
-            project_info={
-                'key': service.current_project.project_key,
-                'name': service.current_project.name,
-                'project_id': service.current_project.project_id
-            }
+            project_info=create_project_info(service.current_project)
         )
         
         logger.info(f"✅ API响应: {len(response.new_features)} 个新features, 耗时 {api_time:.2f}s")
@@ -725,7 +738,8 @@ async def analyze_new_features(request: VersionRequest):
             },
             project_info={
                 'key': request.project_key or 'unknown',
-                'name': 'Unknown',
+                'name_zh': '未知项目',
+                'name_en': 'Unknown Project',
                 'project_id': 'unknown'
             }
         )
@@ -762,11 +776,7 @@ async def detect_missing_tasks(request: VersionRequest):
                     'endpoint': '/detect-missing-tasks',
                     'error': result.get('error', 'Unknown error')
                 },
-                project_info={
-                    'key': service.current_project.project_key,
-                    'name': service.current_project.name,
-                    'project_id': service.current_project.project_id
-                }
+                project_info=create_project_info(service.current_project)
             )
         
         # 构建详细分析结果
@@ -794,11 +804,7 @@ async def detect_missing_tasks(request: VersionRequest):
                 'api_time': api_time,
                 'endpoint': '/detect-missing-tasks'
             },
-            project_info={
-                'key': service.current_project.project_key,
-                'name': service.current_project.name,
-                'project_id': service.current_project.project_id
-            }
+            project_info=create_project_info(service.current_project)
         )
         
         logger.info(f"✅ API响应: {len(response.missing_tasks)} 个缺失tasks, 耗时 {api_time:.2f}s")
@@ -827,7 +833,8 @@ async def detect_missing_tasks(request: VersionRequest):
             },
             project_info={
                 'key': request.project_key or 'unknown',
-                'name': 'Unknown',
+                'name_zh': '未知项目',
+                'name_en': 'Unknown Project',
                 'project_id': 'unknown'
             }
         )
@@ -851,11 +858,7 @@ async def analyze_tasks(request: TaskAnalysisRequest):
             'api_time': api_time,
             'endpoint': '/analyze-tasks'
         }
-        result['project_info'] = {
-            'key': service.current_project.project_key,
-            'name': service.current_project.name,
-            'project_id': service.current_project.project_id
-        }
+        result['project_info'] = create_project_info(service.current_project)
         return result
         
     except Exception as e:
@@ -883,11 +886,7 @@ async def search_tasks(request: TaskSearchRequest):
             'api_time': api_time,
             'endpoint': '/search-tasks'
         }
-        result['project_info'] = {
-            'key': service.current_project.project_key,
-            'name': service.current_project.name,
-            'project_id': service.current_project.project_id
-        }
+        result['project_info'] = create_project_info(service.current_project)
         return result
         
     except Exception as e:
@@ -915,11 +914,7 @@ async def validate_versions(request: VersionValidationRequest):
             'api_time': api_time,
             'endpoint': '/validate-versions'
         }
-        result['project_info'] = {
-            'key': service.current_project.project_key,
-            'name': service.current_project.name,
-            'project_id': service.current_project.project_id
-        }
+        result['project_info'] = create_project_info(service.current_project)
         return result
         
     except Exception as e:
@@ -975,11 +970,7 @@ async def get_statistics(
             'api_time': api_time,
             'endpoint': '/statistics'
         }
-        result['project_info'] = {
-            'key': service.current_project.project_key,
-            'name': service.current_project.name,
-            'project_id': service.current_project.project_id
-        }
+        result['project_info'] = create_project_info(service.current_project)
         return result
         
     except Exception as e:
