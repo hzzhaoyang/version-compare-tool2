@@ -6,6 +6,7 @@
 """
 import os
 import time
+import json
 import logging
 from typing import Dict, Any, List, Optional
 from ..gitlab.gitlab_manager import GitLabManager
@@ -14,16 +15,59 @@ from ..core.task_detector import TaskLossDetector
 logger = logging.getLogger(__name__)
 
 
+class ProjectConfigManager:
+    """项目配置管理器 - 专门用于管理项目配置，不依赖GitLab连接"""
+    
+    def __init__(self):
+        self.config_data = self._load_config()
+    
+    def _load_config(self) -> Dict[str, Any]:
+        """加载项目配置文件"""
+        config_path = os.path.join(os.path.dirname(__file__), '../../config/projects.json')
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f"项目配置文件不存在: {config_path}，请从 projects.json.example 复制并配置")
+        
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            raise ValueError(f"加载项目配置文件失败: {e}")
+    
+    def get_all_projects(self) -> List[Dict[str, str]]:
+        """获取所有项目列表（包括未配置环境变量的项目）"""
+        projects = []
+        project_definitions = self.config_data.get('projects', {})
+        
+        # 检查是否有统一的GitLab Token
+        has_token = bool(os.getenv('GITLAB_TOKEN'))
+        
+        for project_key, project_info in project_definitions.items():
+            projects.append({
+                'key': project_key,
+                'name_zh': project_info['name_zh'],
+                'name_en': project_info['name_en'], 
+                'project_id': project_info['project_id'],
+                'has_valid_config': has_token
+            })
+        
+        return projects
+    
+    def get_current_project_key(self) -> str:
+        """获取当前默认项目key"""
+        return self.config_data.get('default_project', 'complex-report-pro')
+
+
 class ProjectConfig:
     """项目配置类"""
-    def __init__(self, project_key: str, name: str, project_id: str, token: str):
+    def __init__(self, project_key: str, name_zh: str, name_en: str, project_id: str, token: str):
         self.project_key = project_key
-        self.name = name
+        self.name_zh = name_zh  # 中文名
+        self.name_en = name_en  # 英文名
         self.project_id = project_id
         self.token = token
     
     def __repr__(self):
-        return f"ProjectConfig(key={self.project_key}, name={self.name}, id={self.project_id})"
+        return f"ProjectConfig(key={self.project_key}, name_zh={self.name_zh}, name_en={self.name_en}, id={self.project_id})"
 
 
 class VersionComparisonService:
@@ -42,61 +86,68 @@ class VersionComparisonService:
         if not self.current_project:
             raise ValueError(f"无法找到项目配置: {project_key}")
         
-        # 初始化核心组件
-        self.gitlab_manager = GitLabManager(
-            self.gitlab_url, 
-            self.current_project.token, 
-            self.current_project.project_id
-        )
-        self.task_detector = TaskLossDetector(self.gitlab_manager)
+        # 初始化核心组件（在演示模式下可能会失败，但不影响项目列表功能）
+        try:
+            self.gitlab_manager = GitLabManager(
+                self.gitlab_url, 
+                self.current_project.token, 
+                self.current_project.project_id
+            )
+            self.task_detector = TaskLossDetector(self.gitlab_manager)
+        except Exception as e:
+            logger.warning(f"⚠️ GitLab连接失败（演示模式）: {e}")
+            self.gitlab_manager = None
+            self.task_detector = None
         
         logger.info(f"🚀 VersionComparisonService v2 初始化完成")
         logger.info(f"   GitLab URL: {self.gitlab_url}")
-        logger.info(f"   当前项目: {self.current_project.name} (ID: {self.current_project.project_id})")
+        logger.info(f"   当前项目: {self.current_project.name_zh} ({self.current_project.name_en}) (ID: {self.current_project.project_id})")
     
     def _load_project_configs(self) -> Dict[str, ProjectConfig]:
-        """加载所有项目配置"""
+        """从JSON配置文件加载项目配置"""
         projects = {}
         
-        # 预定义的项目列表
-        project_definitions = {
-            'bi-server': 'BI Server',
-            'guandata-web': 'Guandata Web',
-            'complex-report-pro': 'Complex Report Pro',
-            'data-mind': 'Data Mind',
-            'data-synapse': 'Data Synapse'
-        }
+        # 加载项目配置文件
+        config_path = os.path.join(os.path.dirname(__file__), '../../config/projects.json')
+        if not os.path.exists(config_path):
+            raise FileNotFoundError(f"项目配置文件不存在: {config_path}，请从 projects.json.example 复制并配置")
         
-        for project_key, project_name in project_definitions.items():
-            # 获取项目的token和ID
-            token_key = f'GITLAB_TOKEN_{project_key.upper().replace("-", "_")}'
-            id_key = f'GITLAB_PROJECT_ID_{project_key.upper().replace("-", "_")}'
-            
-            token = os.getenv(token_key)
-            project_id = os.getenv(id_key)
-            
-            if token and project_id:
-                projects[project_key] = ProjectConfig(
-                    project_key=project_key,
-                    name=project_name,
-                    project_id=project_id,
-                    token=token
-                )
-                logger.info(f"✅ 加载项目配置: {project_name} (ID: {project_id})")
-            else:
-                logger.warning(f"⚠️ 项目配置不完整: {project_name} - 缺少 {token_key} 或 {id_key}")
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config_data = json.load(f)
+        except Exception as e:
+            raise ValueError(f"加载项目配置文件失败: {e}")
         
-        # 向后兼容性 - 如果设置了旧的环境变量
-        legacy_token = os.getenv('GITLAB_TOKEN')
-        legacy_project_id = os.getenv('GITLAB_PROJECT_ID')
-        if legacy_token and legacy_project_id and 'bi-server' not in projects:
-            projects['bi-server'] = ProjectConfig(
-                project_key='bi-server',
-                name='BI Server (Legacy)',
-                project_id=legacy_project_id,
-                token=legacy_token
+        project_definitions = config_data.get('projects', {})
+        if not project_definitions:
+            raise ValueError("项目配置文件中未找到项目定义")
+        
+        # 获取统一的GitLab Token
+        gitlab_token = os.getenv('GITLAB_TOKEN')
+        
+        # 遍历项目配置
+        for project_key, project_info in project_definitions.items():
+            project_id = project_info.get('project_id')
+            
+            if not project_id:
+                logger.warning(f"⚠️ 项目配置不完整: {project_key} - 缺少project_id")
+                continue
+            
+            # 如果没有token，使用演示模式
+            token = gitlab_token if gitlab_token else 'demo_token'
+            
+            projects[project_key] = ProjectConfig(
+                project_key=project_key,
+                name_zh=project_info['name_zh'],
+                name_en=project_info['name_en'],
+                project_id=project_id,
+                token=token
             )
-            logger.info(f"✅ 加载传统配置: BI Server (ID: {legacy_project_id})")
+            
+            if gitlab_token:
+                logger.info(f"✅ 加载项目配置: {project_info['name_zh']} ({project_info['name_en']}) [ID: {project_id}]")
+            else:
+                logger.info(f"📋 加载项目配置（演示模式）: {project_info['name_zh']} ({project_info['name_en']}) [ID: {project_id}]")
         
         if not projects:
             raise ValueError("未找到任何有效的项目配置")
@@ -122,7 +173,8 @@ class VersionComparisonService:
         return [
             {
                 'key': config.project_key,
-                'name': config.name,
+                'name_zh': config.name_zh,
+                'name_en': config.name_en,
                 'project_id': config.project_id
             }
             for config in self.projects.values()
@@ -137,15 +189,20 @@ class VersionComparisonService:
         old_project = self.current_project
         self.current_project = self.projects[project_key]
         
-        # 重新初始化GitLab管理器
-        self.gitlab_manager = GitLabManager(
-            self.gitlab_url,
-            self.current_project.token,
-            self.current_project.project_id
-        )
-        self.task_detector = TaskLossDetector(self.gitlab_manager)
+        # 重新初始化GitLab管理器（在演示模式下可能会失败，但不影响项目切换）
+        try:
+            self.gitlab_manager = GitLabManager(
+                self.gitlab_url,
+                self.current_project.token,
+                self.current_project.project_id
+            )
+            self.task_detector = TaskLossDetector(self.gitlab_manager)
+            logger.info(f"🔄 项目切换成功: {old_project.name_zh} -> {self.current_project.name_zh}")
+        except Exception as e:
+            logger.warning(f"⚠️ 项目切换到 {self.current_project.name_zh}，但GitLab连接失败（演示模式）: {e}")
+            self.gitlab_manager = None
+            self.task_detector = None
         
-        logger.info(f"🔄 项目切换: {old_project.name} -> {self.current_project.name}")
         return True
     
     def detect_missing_tasks(self, old_version: str, new_version: str) -> Dict[str, Any]:

@@ -1,0 +1,51 @@
+{
+  "projects": {
+    "bi-server": {
+      "name_zh": "BI服务器",
+      "name_en": "BI Server",
+      "project_id": "130"
+    },
+    "guandata-web": {
+      "name_zh": "观远Web",
+      "name_en": "Guandata Web", 
+      "project_id": "126"
+    },
+    "complex-report-pro": {
+      "name_zh": "复杂报表专业版",
+      "name_en": "Complex Report Pro",
+      "project_id": "415"
+    },
+    "data-mind": {
+      "name_zh": "数据大脑",
+      "name_en": "Data Mind",
+      "project_id": "385"
+    },
+    "data-synapse": {
+      "name_zh": "数据突触",
+      "name_en": "Data Synapse",
+      "project_id": "519"
+    },
+    "guandata-writeback": {
+      "name_zh": "回写",
+      "name_en": "Guandata Writeback",
+      "project_id": "468"
+    },
+    "survey-engine": {
+      "name_zh": "表单填报",
+      "name_en": "Survey Engine",
+      "project_id": "484"
+    },
+    "guandata-workflow": {
+      "name_zh": "离线开发",
+      "name_en": "Guandata Workflow", 
+      "project_id": "337"
+    },
+    "chatbi-web": {
+      "name_zh": "ChatBI前端",
+      "name_en": "ChatBI Web",
+      "project_id": "517"
+    }
+  },
+  "default_project": "complex-report-pro",
+  "description": "版本比较工具支持的所有GitLab项目配置"
+} 
